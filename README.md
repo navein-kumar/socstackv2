@@ -21,13 +21,19 @@ Automated deployment of a full Security Operations Center (SOC) stack with SSO i
 
 ## SSO Integration
 
-All services are protected by Keycloak SSO via oauth2-proxy with three role levels:
+Services use Keycloak SSO via oauth2-proxy or native OIDC. MISP and Cortex use their own local authentication.
 
-| Role | Wazuh | n8n | TheHive | MISP | Grafana |
-|------|-------|-----|---------|------|---------|
-| `soc-admin` | Full admin | Full access (shared owner session) | Org-admin | Full admin | Admin |
-| `soc-analyst` | Read-only | Full access (shared owner session) | Analyst | Blocked | Viewer |
-| `soc-readonly` | Read-only | Blocked | Read-only | Blocked | Viewer |
+| Role | Wazuh | n8n | TheHive | Grafana |
+|------|-------|-----|---------|---------|
+| `soc-admin` | Full admin | Full access (shared owner session) | Org-admin | Admin |
+| `soc-analyst` | Read-only | Full access (shared owner session) | Analyst | Viewer |
+| `soc-readonly` | Read-only | Blocked | Read-only | Viewer |
+
+| Service | Auth Method |
+|---------|------------|
+| **MISP** | Local auth (email + password + API key) |
+| **Cortex** | Local auth (username + password + API key) |
+| **Keycloak** | Admin console (SSO provider itself) |
 
 ## Quick Start
 

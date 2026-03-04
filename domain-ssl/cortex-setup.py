@@ -3,6 +3,10 @@
 import requests
 import json
 import sys
+import os
+
+# Auto-detect: use the directory where this script lives
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CORTEX_URL = "http://localhost:9001"
 ADMIN_LOGIN = "admin@codesec.in"
@@ -89,9 +93,10 @@ if resp.status_code == 200:
     print(f"   OK: API Key = {api_key}")
 
     # Save API key for TheHive integration
-    with open("/opt/socstack/.cortex-api-key", "w") as f:
+    key_path = os.path.join(BASE_DIR, ".cortex-api-key")
+    with open(key_path, "w") as f:
         f.write(api_key)
-    print(f"   Saved to /opt/socstack/.cortex-api-key")
+    print(f"   Saved to {key_path}")
 else:
     print(f"   WARN: {resp.status_code} {resp.text[:200]}")
 

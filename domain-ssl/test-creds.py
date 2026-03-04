@@ -16,7 +16,8 @@ import subprocess
 
 requests.packages.urllib3.disable_warnings()
 
-BASE_DIR = "/opt/socstack"
+# Auto-detect: use the directory where this script lives
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEPLOYED_FILE = os.path.join(BASE_DIR, ".env.deployed")
 
 # ── Colors ────────────────────────────────────────────────

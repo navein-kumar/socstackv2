@@ -20,7 +20,8 @@ from datetime import datetime
 
 requests.packages.urllib3.disable_warnings()
 
-BASE_DIR = "/opt/socstack"
+# Auto-detect: use the directory where this script lives
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_TXT = os.path.join(BASE_DIR, "test-results.txt")
 RESULTS_JSON = os.path.join(BASE_DIR, "test-results.json")
 

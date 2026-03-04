@@ -32,7 +32,8 @@ from datetime import datetime
 
 requests.packages.urllib3.disable_warnings()
 
-BASE_DIR = "/opt/socv2"
+# Auto-detect: use the directory where this script lives
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 DEPLOYED_FILE = os.path.join(BASE_DIR, ".env.deployed")
 LOG_FILE = os.path.join(BASE_DIR, "post-deploy.log")

@@ -156,17 +156,22 @@ services:
         hard: 65536
     volumes:
       - socstack_wazuh_indexer_data:/var/lib/wazuh-indexer
+      # Certs → config/certs/ (Java Security Manager allows this path)
       - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
-      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
-      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/indexer-key.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/indexer.pem
       - ./configs/wazuh/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
       - ./configs/wazuh/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
       - ./configs/wazuh/wazuh_indexer_ssl_certs/system-ca.pem:/usr/share/wazuh-indexer/config/certs/system-ca.pem
+      # opensearch.yml → both locations (entrypoint reads root, JVM reads config/)
+      - ./configs/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/opensearch.yml
       - ./configs/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      # Security configs → config/opensearch-security/ (securityadmin reads here)
       - ./configs/wazuh/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
       - ./configs/wazuh/wazuh_indexer/config.yml:/usr/share/wazuh-indexer/config/opensearch-security/config.yml
       - ./configs/wazuh/wazuh_indexer/roles.yml:/usr/share/wazuh-indexer/config/opensearch-security/roles.yml
       - ./configs/wazuh/wazuh_indexer/roles_mapping.yml:/usr/share/wazuh-indexer/config/opensearch-security/roles_mapping.yml
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/opensearch-security/root-ca.pem
     networks:
       - socstack_net
 
@@ -311,11 +316,14 @@ services:
       - "9001"
       - --cortex-keys
       - 20nBlRNOKZxXKGBOUrlIC8OHDQYbYPtl
+      - --config-file
+      - /etc/thehive/application.conf
     volumes:
       - ./data/thehive/thehive_data:/opt/thp/thehive/data
       - ./data/thehive/thehive_files:/opt/thp/thehive/files
       - ./data/thehive/thehive_index:/opt/thp/thehive/index
       - ./data/thehive/thehive_logs:/var/log/thehive
+      - ./configs/thehive/thehive-application.conf:/etc/thehive/application.conf:ro
     networks:
       - socstack_net
 
@@ -439,6 +447,22 @@ services:
       - PHP_SESSION_COOKIE_SAMESITE=None
       - NGINX_X_FORWARDED_FOR=true
       - NGINX_SET_REAL_IP_FROM=0.0.0.0/0
+      # === OIDC SSO (Keycloak) ===
+      - OIDC_ENABLE=true
+      - OIDC_PROVIDER_URL=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}/.well-known/openid-configuration
+      - OIDC_ISSUER=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}
+      - OIDC_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - OIDC_CLIENT_SECRET=${SSO_CLIENT_SECRET}
+      - OIDC_ROLES_PROPERTY=groups
+      - 'OIDC_ROLES_MAPPING={"soc-admin": 1, "soc-analyst": 3, "soc-readonly": 6}'
+      - OIDC_DEFAULT_ORG=${MISP_ORG}
+      - OIDC_REDIRECT_URI=https://${MISP_DOMAIN}/users/login
+      - OIDC_CODE_CHALLENGE_METHOD=S256
+      - OIDC_AUTH_METHOD=client_secret_basic
+      - OIDC_MIXEDAUTH=true
+      - 'OIDC_SCOPES=["profile", "email", "openid"]'
+      - OIDC_OFFLINE_ACCESS=false
+      - OIDC_VERIFY_SSL=true
     networks:
       - socstack_net
 
@@ -481,12 +505,22 @@ services:
       - "5678:5678"
     volumes:
       - ./data/n8n:/home/node/.n8n
+      - ./configs/n8n/hooks.js:/home/node/.n8n/custom/hooks.js:ro
     environment:
       - N8N_PROTOCOL=http
       - N8N_HOST=${N8N_DOMAIN}
       - N8N_PORT=5678
       - WEBHOOK_URL=https://${N8N_DOMAIN}/
       - N8N_SECURE_COOKIE=false
+      - N8N_CUSTOM_EXTENSIONS=/home/node/.n8n/custom
+      - EXTERNAL_HOOK_FILES=/home/node/.n8n/custom/hooks.js
+      - N8N_FORWARD_AUTH_HEADER=X-Forwarded-Email
+      # Full logout chain: oauth2-proxy sign_out → Keycloak logout → back to n8n
+      - SSO_LOGOUT_URL=https://${N8N_DOMAIN}/oauth2/sign_out?rd=https%3A%2F%2F${SSO_DOMAIN}%2Frealms%2F${KC_WAZUH_REALM:-SOC}%2Fprotocol%2Fopenid-connect%2Flogout%3Fpost_logout_redirect_uri%3Dhttps%3A%2F%2F${N8N_DOMAIN}%2F
+      - N8N_TRUST_PROXY=true
+      - NODE_OPTIONS=--max-http-header-size=65536
+      - N8N_EDITOR_BASE_URL=https://${N8N_DOMAIN}
+      - N8N_PUSH_BACKEND=sse
     depends_on:
       - socstack-n8n-redis
     networks:
@@ -524,6 +558,124 @@ services:
     restart: unless-stopped
     environment:
       - ENABLE_METRICS=true
+    networks:
+      - socstack_net
+
+  # ============================================================
+  # SSO PROXIES - TheHive + n8n (oauth2-proxy + hive-bridge)
+  # ============================================================
+
+  # TheHive SSO Bridge: maps Keycloak SSO email → TheHive local login
+  # Flow: NPM → oauth2-proxy-hive → hive-bridge → TheHive
+  socstack-hive-bridge:
+    image: node:22-alpine
+    container_name: socstack-hive-bridge
+    restart: unless-stopped
+    working_dir: /app
+    command: node hive-sso-bridge.js
+    volumes:
+      - ./configs/thehive/hive-sso-bridge.js:/app/hive-sso-bridge.js:ro
+    environment:
+      - THEHIVE_URL=http://socstack-thehive:9000
+      - BRIDGE_PORT=4181
+      - SSO_DOMAIN=${SSO_DOMAIN}
+      - SSO_REALM=${KC_WAZUH_REALM:-SOC}
+      - SSO_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - HIVE_DOMAIN=${THEHIVE_DOMAIN}
+      # Admin mapping: Keycloak SSO email → TheHive local credentials
+      - SSO_ADMIN_EMAIL=${SSO_ADMIN_EMAIL}
+      - HIVE_ADMIN_USER=${THEHIVE_ADMIN_USER:-admin@thehive.local}
+      - HIVE_ADMIN_PASSWORD=${THEHIVE_ADMIN_PASSWORD}
+      # Analyst mapping
+      - SSO_ANALYST_EMAIL=${SSO_ANALYST_EMAIL:-${SSO_USER_EMAIL}}
+      - HIVE_ANALYST_USER=${THEHIVE_ANALYST_USER:-${SSO_USER_EMAIL}}
+      - HIVE_ANALYST_PASSWORD=${THEHIVE_ANALYST_PASSWORD}
+      # Readonly mapping (optional)
+      - SSO_READONLY_EMAIL=${SSO_READONLY_EMAIL:-}
+    depends_on:
+      - socstack-thehive
+    networks:
+      - socstack_net
+
+  # oauth2-proxy for TheHive: authenticates via Keycloak, forwards to hive-bridge
+  socstack-oauth2-proxy-hive:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: socstack-oauth2-proxy-hive
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --provider=oidc
+      - --provider-display-name=SOC SSO
+      - --oidc-issuer-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}
+      - --client-id=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - --client-secret=${SSO_CLIENT_SECRET}
+      - --redirect-url=https://${THEHIVE_DOMAIN}/oauth2/callback
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --cookie-secure=true
+      - --cookie-name=_hive_oauth2
+      - --email-domain=*
+      - --skip-provider-button=true
+      - --upstream=http://socstack-hive-bridge:4181
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --pass-access-token=true
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --insecure-oidc-allow-unverified-email=true
+      - --skip-auth-regex=^/api/v1/login$$
+      - --skip-auth-regex=^/api/v1/status$$
+      - --skip-auth-regex=^/api/connector/cortex/job/status$$
+      # Internal token/JWKS endpoints (avoids SSL hairpin issues)
+      - --login-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/auth
+      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/token
+      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/certs
+    depends_on:
+      - socstack-keycloak
+      - socstack-hive-bridge
+    networks:
+      - socstack_net
+
+  # oauth2-proxy for n8n: authenticates via Keycloak, forwards to n8n (hooks.js auto-login)
+  socstack-oauth2-proxy-n8n:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: socstack-oauth2-proxy-n8n
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --provider=oidc
+      - --provider-display-name=SOC SSO
+      - --oidc-issuer-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}
+      - --client-id=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - --client-secret=${SSO_CLIENT_SECRET}
+      - --redirect-url=https://${N8N_DOMAIN}/oauth2/callback
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --cookie-secure=true
+      - --cookie-name=_n8n_oauth2
+      - --email-domain=*
+      - --skip-provider-button=true
+      - --upstream=http://socstack-n8n:5678
+      - --flush-interval=100ms
+      - --reverse-proxy=true
+      - --oidc-groups-claim=groups
+      - --scope=openid email profile
+      - --allowed-group=soc-admin
+      - --allowed-group=soc-analyst
+      - --whitelist-domain=.${N8N_DOMAIN}
+      - --set-xauthrequest=true
+      - --pass-access-token=true
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --insecure-oidc-allow-unverified-email=true
+      - --skip-auth-regex=^/webhook.*
+      - --skip-auth-regex=^/healthz
+      - --skip-auth-regex=^/rest/oauth2-credential
+      # Internal token/JWKS endpoints (avoids SSL hairpin issues)
+      - --login-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/auth
+      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/token
+      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/certs
+    depends_on:
+      - socstack-keycloak
+      - socstack-n8n
     networks:
       - socstack_net
 

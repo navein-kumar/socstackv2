@@ -22,7 +22,7 @@ config:
           config:
             subject_key: "preferred_username"
             roles_key: "groups"
-            openid_connect_url: "https://sso.codesec.in/realms/wazuh/.well-known/openid-configuration"
+            openid_connect_url: "https://sso.codesec.in/realms/SOC/.well-known/openid-configuration"
             openid_connect_idp:
               enable_ssl: true
               verify_hostnames: false

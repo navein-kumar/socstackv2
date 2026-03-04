@@ -87,13 +87,13 @@ MISP_DB_PASS = env.get("MISP_DB_PASSWORD", "SocMispDb@2025")
 KC_USER = env.get("KC_ADMIN_USER", "admin")
 KC_PASS = env.get("KC_ADMIN_PASSWORD", "SocKeycloak@2025")
 
-# SSO config
-SSO_REALM      = env.get("KC_WAZUH_REALM", "wazuh")
-SSO_CLIENT_ID  = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
+# SSO config -- reads KC_WAZUH_REALM / KC_WAZUH_CLIENT_ID from .env (falls back to SSO_REALM/SSO_CLIENT_ID)
+SSO_REALM      = env.get("KC_WAZUH_REALM", env.get("SSO_REALM", "SOC"))
+SSO_CLIENT_ID  = env.get("KC_WAZUH_CLIENT_ID", env.get("SSO_CLIENT_ID", "soc-sso"))
 
-SSO_GROUP_ADMIN    = "soc-admin"
-SSO_GROUP_ANALYST  = "soc-analyst"
-SSO_GROUP_READONLY = "soc-readonly"
+SSO_GROUP_ADMIN    = env.get("SSO_GROUP_ADMIN", "soc-admin")
+SSO_GROUP_ANALYST  = env.get("SSO_GROUP_ANALYST", "soc-analyst")
+SSO_GROUP_READONLY = env.get("SSO_GROUP_READONLY", "soc-readonly")
 
 SSO_ADMIN_EMAIL = env.get("SSO_ADMIN_EMAIL", "admin@local.lab")
 SSO_ADMIN_PASS  = env.get("SSO_ADMIN_PASSWORD", "SocSsoAdmin@2025")
@@ -708,16 +708,22 @@ def step_keycloak_sso():
     thehive_url = f"https://{SERVER_IP}:{THEHIVE_PORT}"
     n8n_url     = f"https://{SERVER_IP}:{N8N_PORT}"
 
+    misp_url    = f"https://{SERVER_IP}:{MISP_PORT}"
+
     redirect_uris = [
         f"{wazuh_url}/*",
         f"{cortex_url}/api/ssoLogin",
-        f"{thehive_url}/api/ssoLogin",
+        f"{thehive_url}/oauth2/callback",       # oauth2-proxy callback
+        f"{thehive_url}/api/ssoLogin",           # legacy (kept for reference)
         f"{n8n_url}/oauth2/callback",
+        f"{misp_url}/users/login",               # MISP native OIDC
+        f"{misp_url}/*",
     ]
-    web_origins = [wazuh_url, cortex_url, thehive_url, n8n_url]
+    web_origins = [wazuh_url, cortex_url, thehive_url, n8n_url, misp_url]
     post_logout_uris = "+".join([
         f"{wazuh_url}/*", f"{cortex_url}/*",
         f"{thehive_url}/*", f"{n8n_url}/*",
+        f"{misp_url}/*",
     ])
 
     # Create / find client
@@ -728,6 +734,19 @@ def step_keycloak_sso():
     if existing_clients:
         client_uuid = existing_clients[0]["id"]
         log(f"  -> Client '{SSO_CLIENT_ID}' already exists (UUID={client_uuid[:8]}...)")
+        # Update redirect URIs, web origins, and post-logout URIs
+        r = requests.put(f"{KC}/admin/realms/{SSO_REALM}/clients/{client_uuid}", headers=h, json={
+            "clientId": SSO_CLIENT_ID,
+            "redirectUris": redirect_uris,
+            "webOrigins": web_origins,
+            "attributes": {
+                "post.logout.redirect.uris": post_logout_uris,
+            },
+        })
+        if r.status_code == 204:
+            log(f"  -> Client redirect URIs updated")
+        else:
+            log(f"  ! Client update returned: {r.status_code}")
     else:
         r = requests.post(f"{KC}/admin/realms/{SSO_REALM}/clients", headers=h, json={
             "clientId": SSO_CLIENT_ID,
@@ -944,37 +963,36 @@ def step_keycloak_sso():
                 f.write(content)
             log(f"  -> thehive-application.conf updated (SSO secret + IP:PORT + org)")
 
-    # Save client_secret to .env
-    if client_secret:
-        env_path = os.path.join(BASE_DIR, ".env")
-        if os.path.exists(env_path):
-            with open(env_path) as f:
-                env_content = f.read()
-            if "SSO_CLIENT_SECRET=" in env_content:
+    # Save SSO_CLIENT_SECRET + OAUTH2_PROXY_COOKIE_SECRET to .env (single read/write)
+    env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            env_content = f.read()
+
+        # SSO_CLIENT_SECRET
+        if client_secret:
+            if re.search(r'^SSO_CLIENT_SECRET=', env_content, re.MULTILINE):
                 env_content = re.sub(
                     r'^SSO_CLIENT_SECRET=.*$',
                     f'SSO_CLIENT_SECRET={client_secret}',
                     env_content, flags=re.MULTILINE
                 )
             else:
-                env_content += f"\nSSO_CLIENT_SECRET={client_secret}\n"
-            with open(env_path, "w") as f:
-                f.write(env_content)
+                env_content = env_content.rstrip() + f"\nSSO_CLIENT_SECRET={client_secret}\n"
             log(f"  -> SSO_CLIENT_SECRET saved to .env")
 
-    # Generate OAUTH2_PROXY_COOKIE_SECRET if not already set
-    env_path = os.path.join(BASE_DIR, ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            env_content = f.read()
-        if "OAUTH2_PROXY_COOKIE_SECRET=" not in env_content:
-            cookie_secret = os.urandom(16).hex()  # 32 hex chars = exactly 32 bytes
-            env_content += f"\nOAUTH2_PROXY_COOKIE_SECRET={cookie_secret}\n"
-            with open(env_path, "w") as f:
-                f.write(env_content)
-            log(f"  -> OAUTH2_PROXY_COOKIE_SECRET generated and saved to .env")
+        # OAUTH2_PROXY_COOKIE_SECRET (reuse existing, generate only if missing)
+        cookie_secret = env.get("OAUTH2_PROXY_COOKIE_SECRET", "")
+        if cookie_secret:
+            log(f"  -> OAUTH2_PROXY_COOKIE_SECRET already in .env (reusing)")
         else:
-            log(f"  -> OAUTH2_PROXY_COOKIE_SECRET already in .env (skipping)")
+            cookie_secret = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+            env_content = env_content.rstrip() + f"\nOAUTH2_PROXY_COOKIE_SECRET={cookie_secret}\n"
+            log(f"  -> OAUTH2_PROXY_COOKIE_SECRET generated and saved to .env")
+        deployed["OAUTH2_PROXY_COOKIE_SECRET"] = cookie_secret
+
+        with open(env_path, "w") as f:
+            f.write(env_content)
 
     # Restart Cortex + TheHive so they reload their updated application.conf files
     log("  Restarting Cortex and TheHive to reload SSO application.conf...")

@@ -77,9 +77,9 @@ MISP_DB_PASS = env.get("MISP_DB_PASSWORD", "SocMispDb@2025")
 KC_USER = env.get("KC_ADMIN_USER", "admin")
 KC_PASS = env.get("KC_ADMIN_PASSWORD", "SocKeycloak@2025")
 
-# SSO V2 config -- single realm + single client for all services
-SSO_REALM = env.get("SSO_REALM", "SOC")
-SSO_CLIENT_ID = env.get("SSO_CLIENT_ID", "soc-sso")
+# SSO config -- reads KC_WAZUH_REALM / KC_WAZUH_CLIENT_ID from .env (falls back to SSO_REALM/SSO_CLIENT_ID)
+SSO_REALM = env.get("KC_WAZUH_REALM", env.get("SSO_REALM", "SOC"))
+SSO_CLIENT_ID = env.get("KC_WAZUH_CLIENT_ID", env.get("SSO_CLIENT_ID", "soc-sso"))
 
 SSO_GROUP_ADMIN = env.get("SSO_GROUP_ADMIN", "soc-admin")
 SSO_GROUP_ANALYST = env.get("SSO_GROUP_ANALYST", "soc-analyst")
@@ -109,14 +109,14 @@ CORTEX_DOMAIN = env.get("CORTEX_DOMAIN", "cortex.codesec.in")
 THEHIVE_DOMAIN = env.get("THEHIVE_DOMAIN", "hive.codesec.in")
 N8N_DOMAIN = env.get("N8N_DOMAIN", "n8n.codesec.in")
 
-# n8n goes through oauth2-proxy (port 4180), all others stay the same as V1
+# n8n and TheHive go through oauth2-proxy (port 4180), MISP has native OIDC
 DOMAINS = {
-    "sso":     {"domain": env.get("SSO_DOMAIN", "sso.codesec.in"),     "host": "socstack-keycloak",         "port": 8080, "scheme": "http"},
-    "wazuh":   {"domain": env.get("WAZUH_DOMAIN", "wazuh.codesec.in"), "host": "socstack-wazuh-dashboard",  "port": 5601, "scheme": "https"},
-    "n8n":     {"domain": env.get("N8N_DOMAIN", "n8n.codesec.in"),     "host": "socstack-oauth2-proxy",     "port": 4180, "scheme": "http"},
-    "cti":     {"domain": env.get("MISP_DOMAIN", "cti.codesec.in"),    "host": "socstack-misp-core",        "port": 443,  "scheme": "https"},
-    "hive":    {"domain": env.get("THEHIVE_DOMAIN", "hive.codesec.in"),"host": "socstack-thehive",          "port": 9000, "scheme": "http"},
-    "cortex":  {"domain": env.get("CORTEX_DOMAIN", "cortex.codesec.in"),"host": "socstack-cortex",          "port": 9001, "scheme": "http"},
+    "sso":     {"domain": env.get("SSO_DOMAIN", "sso.codesec.in"),     "host": "socstack-keycloak",            "port": 8080, "scheme": "http"},
+    "wazuh":   {"domain": env.get("WAZUH_DOMAIN", "wazuh.codesec.in"), "host": "socstack-wazuh-dashboard",     "port": 5601, "scheme": "https"},
+    "n8n":     {"domain": env.get("N8N_DOMAIN", "n8n.codesec.in"),     "host": "socstack-oauth2-proxy-n8n",    "port": 4180, "scheme": "http"},
+    "cti":     {"domain": env.get("MISP_DOMAIN", "cti.codesec.in"),    "host": "socstack-misp-core",           "port": 443,  "scheme": "https"},
+    "hive":    {"domain": env.get("THEHIVE_DOMAIN", "hive.codesec.in"),"host": "socstack-oauth2-proxy-hive",   "port": 4180, "scheme": "http"},
+    "cortex":  {"domain": env.get("CORTEX_DOMAIN", "cortex.codesec.in"),"host": "socstack-cortex",             "port": 9001, "scheme": "http"},
     "npm":     {"domain": env.get("NPM_DOMAIN", "npm.codesec.in"),     "host": "socstack-nginx",            "port": 81,   "scheme": "http"},
 }
 
@@ -236,10 +236,10 @@ def step_npm():
 
     for key, cfg in DOMAINS.items():
         d = cfg["domain"]
-        # SSO (Keycloak) needs block_exploits=False and larger buffers
-        is_sso = (key == "sso")
-        adv = NPM_ADVANCED_SSO if is_sso else NPM_ADVANCED
-        blk = False if is_sso else True
+        # SSO/oauth2-proxy services need block_exploits=False and larger buffers
+        needs_sso_buffers = key in ("sso", "n8n", "hive")
+        adv = NPM_ADVANCED_SSO if needs_sso_buffers else NPM_ADVANCED
+        blk = False if needs_sso_buffers else True
         if d in existing_map:
             log(f"  -> Proxy exists: {d} (ID={existing_map[d]})")
         else:
@@ -876,23 +876,29 @@ def step_keycloak_sso():
 
     # -- Create OIDC client (confidential) - single client for all ------
     # Redirect URIs for all services
+    MISP_DOMAIN = env.get("MISP_DOMAIN", "cti.codesec.in")
     redirect_uris = [
         f"https://{WAZUH_DOMAIN}/*",
         f"https://{CORTEX_DOMAIN}/api/ssoLogin",
-        f"https://{THEHIVE_DOMAIN}/api/ssoLogin",
+        f"https://{THEHIVE_DOMAIN}/oauth2/callback",    # oauth2-proxy callback
+        f"https://{THEHIVE_DOMAIN}/api/ssoLogin",       # legacy (kept for reference)
         f"https://{N8N_DOMAIN}/oauth2/callback",
+        f"https://{MISP_DOMAIN}/users/login",            # MISP native OIDC
+        f"https://{MISP_DOMAIN}/*",
     ]
     web_origins = [
         f"https://{WAZUH_DOMAIN}",
         f"https://{CORTEX_DOMAIN}",
         f"https://{THEHIVE_DOMAIN}",
         f"https://{N8N_DOMAIN}",
+        f"https://{MISP_DOMAIN}",
     ]
     post_logout_uris = "+".join([
         f"https://{WAZUH_DOMAIN}/*",
         f"https://{CORTEX_DOMAIN}/*",
         f"https://{THEHIVE_DOMAIN}/*",
         f"https://{N8N_DOMAIN}/*",
+        f"https://{MISP_DOMAIN}/*",
     ])
 
     # Check existing clients
@@ -903,6 +909,19 @@ def step_keycloak_sso():
     if existing_clients:
         client_uuid = existing_clients[0]["id"]
         log(f"  -> Client '{SSO_CLIENT_ID}' already exists (UUID={client_uuid[:8]}...)")
+        # Update redirect URIs, web origins, and post-logout URIs
+        r = requests.put(f"{KC}/admin/realms/{SSO_REALM}/clients/{client_uuid}", headers=h, json={
+            "clientId": SSO_CLIENT_ID,
+            "redirectUris": redirect_uris,
+            "webOrigins": web_origins,
+            "attributes": {
+                "post.logout.redirect.uris": post_logout_uris,
+            },
+        })
+        if r.status_code == 204:
+            log(f"  -> Client redirect URIs updated")
+        else:
+            log(f"  ! Client update returned: {r.status_code}")
     else:
         r = requests.post(f"{KC}/admin/realms/{SSO_REALM}/clients", headers=h, json={
             "clientId": SSO_CLIENT_ID,
@@ -1065,6 +1084,35 @@ def step_keycloak_sso():
     deployed["SSO_REALM"] = SSO_REALM
     deployed["SSO_CLIENT_ID"] = SSO_CLIENT_ID
 
+    # -- Replace domain/realm/client placeholders in config files --------
+    config_replacements = {
+        "YOUR_SSO_DOMAIN": SSO_DOMAIN,
+        "YOUR_SSO_REALM": SSO_REALM,
+        "YOUR_SSO_CLIENT_ID": SSO_CLIENT_ID,
+        "YOUR_CORTEX_DOMAIN": CORTEX_DOMAIN,
+        "YOUR_CORTEX_SECRET": env.get("CORTEX_SECRET", "ChangeMe_Cortex2025SecretKey"),
+        "YOUR_CORTEX_ORG_NAME": CORTEX_ORG,
+        "YOUR_THEHIVE_DOMAIN": THEHIVE_DOMAIN,
+        "YOUR_THEHIVE_ORG_NAME": THEHIVE_ORG,
+    }
+    config_files = [
+        os.path.join(BASE_DIR, "configs/thehive/cortex-application.conf"),
+        os.path.join(BASE_DIR, "configs/thehive/thehive-application.conf"),
+    ]
+    for cfg_path in config_files:
+        if os.path.exists(cfg_path):
+            with open(cfg_path) as f:
+                content = f.read()
+            original = content
+            for placeholder, value in config_replacements.items():
+                content = content.replace(placeholder, value)
+            if content != original:
+                with open(cfg_path, "w") as f:
+                    f.write(content)
+                log(f"  -> Placeholders replaced in {os.path.basename(cfg_path)}")
+            else:
+                log(f"  -> No placeholders found in {os.path.basename(cfg_path)} (already configured)")
+
     # -- Inject client_secret into config files -------------------------
     if client_secret:
         # 1. opensearch_dashboards.yml (Wazuh Dashboard)
@@ -1133,11 +1181,15 @@ def step_keycloak_sso():
         else:
             log(f"  X TheHive config not found at {thehive_conf}")
 
-    # -- Generate OAUTH2_PROXY_COOKIE_SECRET ----------------------------
-    log("\n  Generating OAUTH2_PROXY_COOKIE_SECRET...")
-    cookie_secret = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+    # -- Generate OAUTH2_PROXY_COOKIE_SECRET (reuse existing if set) -----
+    cookie_secret = env.get("OAUTH2_PROXY_COOKIE_SECRET", "")
+    if cookie_secret:
+        log(f"\n  OAUTH2_PROXY_COOKIE_SECRET already set: {cookie_secret[:12]}... (reusing)")
+    else:
+        log("\n  Generating OAUTH2_PROXY_COOKIE_SECRET...")
+        cookie_secret = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+        log(f"  -> OAUTH2_PROXY_COOKIE_SECRET: {cookie_secret[:12]}...")
     deployed["OAUTH2_PROXY_COOKIE_SECRET"] = cookie_secret
-    log(f"  -> OAUTH2_PROXY_COOKIE_SECRET: {cookie_secret[:12]}...")
 
     # -- Save SSO_CLIENT_SECRET and OAUTH2_PROXY_COOKIE_SECRET to .env --
     if client_secret or cookie_secret:
@@ -1149,7 +1201,7 @@ def step_keycloak_sso():
 
             # Add/update SSO_CLIENT_SECRET
             if client_secret:
-                if "SSO_CLIENT_SECRET=" in env_content:
+                if re.search(r'^SSO_CLIENT_SECRET=', env_content, re.MULTILINE):
                     env_content = re.sub(
                         r'^SSO_CLIENT_SECRET=.*$',
                         f'SSO_CLIENT_SECRET={client_secret}',
@@ -1157,16 +1209,13 @@ def step_keycloak_sso():
                         flags=re.MULTILINE
                     )
                 else:
-                    # Add after SSO_CLIENT_ID line
-                    env_content = env_content.replace(
-                        "# SSO_CLIENT_SECRET is auto-generated during post-deploy",
-                        f"SSO_CLIENT_SECRET={client_secret}"
-                    )
+                    # Append after any SSO_CLIENT_SECRET comment or at end
+                    env_content = env_content.rstrip() + f"\nSSO_CLIENT_SECRET={client_secret}\n"
                 log(f"  -> SSO_CLIENT_SECRET saved to .env")
 
             # Add/update OAUTH2_PROXY_COOKIE_SECRET
             if cookie_secret:
-                if "OAUTH2_PROXY_COOKIE_SECRET=" in env_content:
+                if re.search(r'^OAUTH2_PROXY_COOKIE_SECRET=', env_content, re.MULTILINE):
                     env_content = re.sub(
                         r'^OAUTH2_PROXY_COOKIE_SECRET=.*$',
                         f'OAUTH2_PROXY_COOKIE_SECRET={cookie_secret}',
@@ -1174,11 +1223,8 @@ def step_keycloak_sso():
                         flags=re.MULTILINE
                     )
                 else:
-                    # Add after the oauth2-proxy comment
-                    env_content = env_content.replace(
-                        "# OAUTH2_PROXY_COOKIE_SECRET is auto-generated during post-deploy",
-                        f"OAUTH2_PROXY_COOKIE_SECRET={cookie_secret}"
-                    )
+                    # Append after SSO_CLIENT_SECRET or at end
+                    env_content = env_content.rstrip() + f"\nOAUTH2_PROXY_COOKIE_SECRET={cookie_secret}\n"
                 log(f"  -> OAUTH2_PROXY_COOKIE_SECRET saved to .env")
 
             with open(env_path, "w") as f:

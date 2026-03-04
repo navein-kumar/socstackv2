@@ -180,13 +180,18 @@ services:
         hard: 65536
     volumes:
       - socstack_wazuh_indexer_data:/var/lib/wazuh-indexer
+      # Certs → config/certs/ (Java Security Manager allows this path)
       - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
-      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
-      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/indexer-key.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/indexer.pem
       - ./configs/wazuh/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
       - ./configs/wazuh/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
       - ./configs/wazuh/wazuh_indexer_ssl_certs/system-ca.pem:/usr/share/wazuh-indexer/config/certs/system-ca.pem
+      # opensearch.yml → both locations (entrypoint reads root, JVM reads config/)
+      - ./configs/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/opensearch.yml
       - ./configs/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      # Security configs → config/opensearch-security/ (securityadmin reads here)
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/opensearch-security/root-ca.pem
       - ./configs/wazuh/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
       - ./configs/wazuh/wazuh_indexer/config.yml:/usr/share/wazuh-indexer/config/opensearch-security/config.yml
       - ./configs/wazuh/wazuh_indexer/roles.yml:/usr/share/wazuh-indexer/config/opensearch-security/roles.yml

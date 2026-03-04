@@ -17,12 +17,12 @@ opensearch_security.session.keepalive: true
 # ── Keycloak SSO (OpenID Connect) ───────────────────────────
 opensearch_security.auth.multiple_auth_enabled: true
 opensearch_security.auth.type: ["basicauth","openid"]
-opensearch_security.openid.connect_url: "https://sso.codesec.in/realms/wazuh/.well-known/openid-configuration"
+opensearch_security.openid.connect_url: "https://sso.codesec.in/realms/SOC/.well-known/openid-configuration"
 opensearch_security.openid.base_redirect_url: "https://wazuh.codesec.in"
-opensearch_security.openid.client_id: "wazuh-sso"
+opensearch_security.openid.client_id: "soc-sso"
 opensearch_security.openid.client_secret: "WILL_BE_SET_BY_POST_DEPLOY"
 # Note: post-deploy.py auto-replaces the above placeholder with the actual Keycloak client secret
 opensearch_security.openid.scope: "openid profile email"
 opensearch_security.openid.header: "Authorization"
-opensearch_security.openid.logout_url: "https://sso.codesec.in/realms/wazuh/protocol/openid-connect/logout"
+opensearch_security.openid.logout_url: "https://sso.codesec.in/realms/SOC/protocol/openid-connect/logout"
 opensearch_security.openid.verify_hostnames: false

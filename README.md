@@ -26,7 +26,7 @@ Services use Keycloak SSO via oauth2-proxy or native OIDC. MISP and Cortex use t
 | Role | Wazuh | n8n | TheHive | Grafana |
 |------|-------|-----|---------|---------|
 | `soc-admin` | Full admin | Full access (shared owner session) | Org-admin | Admin |
-| `soc-analyst` | Read-only | Full access (shared owner session) | Analyst | Viewer |
+| `soc-analyst` | admin | Full access (shared owner session) | Analyst | Viewer |
 | `soc-readonly` | Read-only | Blocked | Read-only | Viewer |
 
 | Service | Auth Method |

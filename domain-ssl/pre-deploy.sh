@@ -10,13 +10,9 @@
 #   sudo ./pre-deploy.sh
 # ============================================================
 
-# Self-fix: if this script was SCP'd from Windows, fix its own CRLF first
-# This runs before anything else so the rest of the script parses correctly
-if grep -qP '\r$' "$0" 2>/dev/null; then
-    sed -i 's/\r$//' "$0"
-    echo "Fixed CRLF in pre-deploy.sh — re-executing..."
-    exec bash "$0" "$@"
-fi
+# CRLF self-fix: single-line so it works even when this file has \r\n endings.
+# The trailing # absorbs the \r so bash can parse the line correctly.
+grep -qP '\r$' "$0" 2>/dev/null && sed -i 's/\r$//' "$0" && echo "Fixed CRLF in $0 — re-running..." && exec bash "$0" "$@" #
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -82,7 +78,10 @@ if [ $FAIL -gt 0 ]; then
 fi
 ok "All required variables set"
 
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/socstack}"
+# Auto-detect: use the directory where this script lives as DEPLOY_DIR
+# No need to set DEPLOY_DIR in .env — just run the script from your deploy folder
+DEPLOY_DIR="$SCRIPT_DIR"
+info "DEPLOY_DIR auto-detected: $DEPLOY_DIR"
 ALL_DOMAINS="$SSO_DOMAIN $WAZUH_DOMAIN $N8N_DOMAIN $MISP_DOMAIN $THEHIVE_DOMAIN $CORTEX_DOMAIN $GRAFANA_DOMAIN $NPM_DOMAIN"
 
 # ── 1. System Checks ─────────────────────────────────────
@@ -115,7 +114,9 @@ else
 fi
 
 # Disk
-DISK_AVAIL_GB=$(df -BG "$DEPLOY_DIR" 2>/dev/null | awk 'NR==2{gsub(/G/,""); print $4}' || df -BG / | awk 'NR==2{gsub(/G/,""); print $4}')
+DISK_AVAIL_GB=$(df -BG "$DEPLOY_DIR" 2>/dev/null | awk 'NR==2{gsub(/G/,""); print $4}')
+[ -z "$DISK_AVAIL_GB" ] && DISK_AVAIL_GB=$(df -BG / 2>/dev/null | awk 'NR==2{gsub(/G/,""); print $4}')
+[ -z "$DISK_AVAIL_GB" ] && DISK_AVAIL_GB=0
 if [ "$DISK_AVAIL_GB" -ge 80 ]; then
     ok "Disk: ${DISK_AVAIL_GB}GB available (100GB recommended)"
 elif [ "$DISK_AVAIL_GB" -ge 50 ]; then

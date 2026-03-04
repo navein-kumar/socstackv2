@@ -87,7 +87,10 @@ MISP_PORT="${MISP_PORT:-8446}"
 THEHIVE_PORT="${THEHIVE_PORT:-8447}"
 CORTEX_PORT="${CORTEX_PORT:-8448}"
 
-DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR}"
+# Auto-detect: use the directory where this script lives as DEPLOY_DIR
+# No need to set DEPLOY_DIR in .env — just run the script from your deploy folder
+DEPLOY_DIR="$SCRIPT_DIR"
+info "DEPLOY_DIR auto-detected: $DEPLOY_DIR"
 
 # ── 1. System Checks ─────────────────────────────────────
 echo ""
@@ -119,7 +122,9 @@ else
 fi
 
 # Disk
-DISK_AVAIL_GB=$(df -BG "$DEPLOY_DIR" 2>/dev/null | awk 'NR==2{gsub(/G/,""); print $4}' || df -BG / | awk 'NR==2{gsub(/G/,""); print $4}')
+DISK_AVAIL_GB=$(df -BG "$DEPLOY_DIR" 2>/dev/null | awk 'NR==2{gsub(/G/,""); print $4}')
+[ -z "$DISK_AVAIL_GB" ] && DISK_AVAIL_GB=$(df -BG / 2>/dev/null | awk 'NR==2{gsub(/G/,""); print $4}')
+[ -z "$DISK_AVAIL_GB" ] && DISK_AVAIL_GB=0
 if [ "$DISK_AVAIL_GB" -ge 80 ]; then
     ok "Disk: ${DISK_AVAIL_GB}GB available (100GB recommended)"
 elif [ "$DISK_AVAIL_GB" -ge 50 ]; then

@@ -133,6 +133,12 @@ chmod +x pre-deploy.sh
 sudo ./pre-deploy.sh
 ```
 
+> **Windows line-ending fix (optional):** If you see `$'\r': command not found` errors,
+> run this once before pre-deploy to convert all files from Windows (CRLF) to Linux (LF):
+> ```bash
+> find . -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.conf" -o -name "*.js" -o -name "*.json" -o -name "*.env" -o -name "*.example" \) -exec sed -i 's/\r$//' {} \;
+> ```
+
 **What pre-deploy does:**
 - Checks Docker, RAM, disk space, and port availability
 - **Generates self-signed CA + server SSL certificate** for your `SERVER_IP` (with IP SAN)

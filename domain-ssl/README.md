@@ -24,7 +24,7 @@ A production-ready, fully automated Docker-based SOC stack deploying **22 contai
 - [Quick Start](#quick-start)
 - [Post-Deployment (Automated)](#post-deployment-automated)
 - [Post-Deployment UI Configuration (Manual)](#post-deployment-ui-configuration-manual)
-- [SSO Users, Groups & Role Mappings](#sso-users-groups--role-mappings)
+- [SSO Roles & Permissions per Application](#sso-roles--permissions-per-application)
 - [Credentials & API Keys](#credentials--api-keys)
 - [n8n Wazuh Integration](#n8n-wazuh-integration)
 - [Directory Structure](#directory-structure)
@@ -56,7 +56,7 @@ A production-ready, fully automated Docker-based SOC stack deploying **22 contai
               |
               +--- Wazuh:   Native OIDC
               +--- TheHive:  oauth2-proxy + hive-sso-bridge
-              +--- n8n:      oauth2-proxy + hooks.js
+              +--- n8n:      oauth2-proxy + hooks.js (soc-admin only)
               +--- MISP:     Native OIDC
               +--- Cortex:   Native OAuth2
 ```
@@ -82,7 +82,7 @@ All six services authenticate via a **single Keycloak realm (`SOC`)** and a **si
 |---------|-----------|-------------|
 | **Wazuh** | Native OIDC | OpenSearch Security plugin validates JWT tokens directly |
 | **TheHive** | oauth2-proxy + hive-sso-bridge | Proxy authenticates via Keycloak, bridge maps SSO email to TheHive local credentials |
-| **n8n** | oauth2-proxy + hooks.js | Proxy authenticates via Keycloak, hooks.js auto-creates/logs-in n8n users |
+| **n8n** | oauth2-proxy + hooks.js | Proxy authenticates via Keycloak (soc-admin only), hooks.js auto-creates/logs-in n8n users |
 | **MISP** | Native OIDC | Built-in OIDC support via environment variables |
 | **Cortex** | Native OAuth2 | application.conf OAuth2 provider config |
 | **Grafana** | Native OAuth2 | Built-in Keycloak/OIDC integration |
@@ -121,7 +121,7 @@ Browser --> NPM (SSL) --> oauth2-proxy --> Keycloak (auth) --> upstream service
 | 19 | `socstack-grafana-renderer` | grafana/grafana-image-renderer | Image rendering for alerts |
 | 20 | `socstack-hive-bridge` | node:22-alpine | TheHive SSO bridge (email-to-creds) |
 | 21 | `socstack-oauth2-proxy-hive` | oauth2-proxy:v7.7.1 | TheHive SSO gateway |
-| 22 | `socstack-oauth2-proxy-n8n` | oauth2-proxy:v7.7.1 | n8n SSO gateway |
+| 22 | `socstack-oauth2-proxy-n8n` | oauth2-proxy:v7.7.1 | n8n SSO gateway (soc-admin only) |
 
 All containers run on a single `socstack_net` Docker bridge network.
 
@@ -180,7 +180,7 @@ nano .env     # Fill in ALL required fields
 scp -r domain-ssl/* root@YOUR_SERVER_IP:/path/to/deploy/
 ```
 
-> You can deploy to **any directory** -- `/opt/socstack`, `/home/user/soc-stack`, etc. All scripts auto-detect the path.
+> You can deploy to **any directory**. All scripts auto-detect the path.
 
 ### Step 3: Pre-Deployment Checks
 
@@ -193,8 +193,8 @@ sudo ./pre-deploy.sh
 
 **pre-deploy.sh automatically handles:**
 
-| Section | What It Does |
-|---------|--------------|
+| Check | What It Does |
+|-------|--------------|
 | System | Validates OS, RAM (16GB+), disk (50GB+), root access |
 | Docker | Verifies Docker + Compose installed, daemon running |
 | Kernel | Sets `vm.max_map_count=262144` (persistent) |
@@ -283,9 +283,9 @@ After `post-deploy.py` completes, some UI configurations must be done manually.
 
 ---
 
-## SSO Users, Groups & Role Mappings
+## SSO Roles & Permissions per Application
 
-### Keycloak Realm & Client
+### Keycloak SSO Overview
 
 | Setting | Value |
 |---------|-------|
@@ -294,47 +294,176 @@ After `post-deploy.py` completes, some UI configurations must be done manually.
 | Client Type | Confidential (with secret) |
 | Groups Mapper | `groups` claim in all tokens |
 
-### SSO Users (Created by post-deploy.py)
+### SSO Groups & Users
 
-| User | Group | Role Level |
-|------|-------|-----------|
-| `SSO_ADMIN_EMAIL` (e.g. admin@codesec.in) | **soc-admin** | Full administrator |
-| `SSO_ANALYST_EMAIL` (e.g. analyst@codesec.in) | **soc-analyst** | Read/write/analyze |
-| `SSO_READONLY_EMAIL` (e.g. readonly@codesec.in) | **soc-readonly** | View only |
+| SSO User (.env key) | Keycloak Group | Role Level |
+|---------------------|----------------|-----------|
+| `SSO_ADMIN_EMAIL` | **soc-admin** | Full administrator |
+| `SSO_ANALYST_EMAIL` | **soc-analyst** | Analyst (read/write/analyze) |
+| `SSO_READONLY_EMAIL` | **soc-readonly** | Read-only viewer |
 
-### Per-Service Role Mappings
+---
 
-| Service | soc-admin | soc-analyst | soc-readonly |
-|---------|-----------|-------------|--------------|
-| **Wazuh** | `all_access` (full admin) | `all_access` (full admin) | `kibana_user` + `wazuh_user` (read-only) |
-| **TheHive** | Admin credentials via bridge | Analyst credentials via bridge | Read-only |
-| **n8n** | Allowed (auto-create user) | Allowed (auto-create user) | Blocked |
-| **MISP** | Auto-create via OIDC | Auto-create via OIDC | Auto-create via OIDC |
-| **Cortex** | `superadmin` | `read, analyze, orgadmin` | `read` |
-| **Grafana** | Admin | Editor | Viewer |
+### 1. Wazuh SIEM
 
-### Wazuh API RBAC Rules (port 55000)
+**SSO Method:** Native OpenID Connect (OIDC)
 
-| Rule | Group | API Roles |
-|------|-------|-----------|
-| 100 | `soc-admin` | administrator, users_admin, agents_admin, cluster_admin |
-| 101 | `soc-analyst` | administrator, users_admin, agents_admin, cluster_admin |
-| 102 | `soc-readonly` | readonly, agents_readonly, cluster_readonly |
+**Login URL:** `https://WAZUH_DOMAIN` > Click "Log in with single sign-on"
 
-### SSO Login Flow
+| SSO Group | OpenSearch Roles | Wazuh API Roles (port 55000) | Can Do |
+|-----------|-----------------|------------------------------|--------|
+| **soc-admin** | `all_access`, `kibana_user` | administrator, users_admin, agents_admin, cluster_admin | Full access: dashboards, agents, rules, decoders, settings, user management |
+| **soc-analyst** | `all_access`, `kibana_user` | administrator, users_admin, agents_admin, cluster_admin | Same as admin (full access) |
+| **soc-readonly** | `wazuh_user`, `kibana_user` | readonly, agents_readonly, cluster_readonly | View dashboards & alerts only. Cannot modify agents, rules, or settings |
 
-1. Go to any service URL (e.g. `https://wazuh.yourdomain.com`)
-2. Click **"Log in with single sign-on"** (or auto-redirect)
-3. Authenticate with Keycloak using SSO credentials
-4. Redirected back to the service with correct role permissions
+> **Local login also available:** username `admin` / password from `WAZUH_INDEXER_PASSWORD`
+
+---
+
+### 2. TheHive (Case Management)
+
+**SSO Method:** oauth2-proxy + hive-sso-bridge (Node.js)
+
+**Login URL:** `https://THEHIVE_DOMAIN` > Auto-redirects to Keycloak
+
+**How it works:** TheHive 5.x Community Edition does not support native OIDC. Instead, oauth2-proxy handles Keycloak authentication, then the hive-sso-bridge maps the authenticated SSO email to a TheHive local account and logs in automatically.
+
+| SSO Group | TheHive Local Account Mapped | TheHive Role | Can Do |
+|-----------|------------------------------|-------------|--------|
+| **soc-admin** | `THEHIVE_ADMIN_USER` (admin@thehive.local) | org-admin | Full access: cases, alerts, tasks, observables, org settings, user management |
+| **soc-analyst** | `THEHIVE_ANALYST_USER` (analyst@codesec.in) | analyst | Create/edit cases, manage tasks & observables. Cannot manage org settings or users |
+| **soc-readonly** | read-only account (if configured) | read-only | View cases and alerts only. Cannot create or modify |
+
+> **Note:** The bridge requires matching TheHive local accounts. `post-deploy.py` creates the admin and analyst accounts automatically. To add more SSO users, add them to a Keycloak group and create a matching local TheHive account.
+
+> **Local login also available:** `admin@thehive.local` / password from `THEHIVE_ADMIN_PASSWORD`
+
+---
+
+### 3. n8n (Workflow Automation / SOAR)
+
+**SSO Method:** oauth2-proxy + hooks.js (shared owner session)
+
+**Login URL:** `https://N8N_DOMAIN` > Auto-redirects to Keycloak
+
+| SSO Group | Access | n8n Session | Can Do |
+|-----------|--------|-------------|--------|
+| **soc-admin** | Allowed | Owner session (full access) | All workflows, credentials, executions, settings |
+| **soc-analyst** | Allowed | Owner session (full access) | Same as soc-admin (shared workspace) |
+| **soc-readonly** | **Blocked** | N/A | Cannot access n8n (blocked at oauth2-proxy) |
+
+**How it works (Shared Owner Session):**
+
+n8n Community Edition does not support workflow sharing, RBAC, or team workspaces (these require Enterprise Edition). To work around this, `hooks.js` uses a **shared owner session** approach:
+
+1. User clicks n8n URL > oauth2-proxy redirects to Keycloak
+2. Keycloak authenticates and verifies group membership (soc-admin or soc-analyst)
+3. oauth2-proxy passes the authenticated email to n8n via `X-Forwarded-Email` header
+4. `hooks.js` receives the header but **does NOT create a per-user account**
+5. Instead, it finds the **n8n owner account** (`N8N_ADMIN_EMAIL`) and issues a session cookie for that account
+6. The SSO user now sees the owner's workspace — all workflows, credentials, and executions
+
+```
+soc-admin@codesec.in   ──┐
+                          ├── oauth2-proxy (Keycloak auth) ──> hooks.js ──> owner session
+analyst@codesec.in     ──┘                                                     |
+                                                                    All shared workflows
+                                                                    (Wazuh alerts, SOAR, etc.)
+```
+
+> **Access control** is handled at the oauth2-proxy level — only `soc-admin` and `soc-analyst` Keycloak groups can reach n8n. `soc-readonly` is blocked with a 403 error.
+>
+> **All SSO users share one workspace** — any workflow created by one user is visible to all. This is by design for SOC team collaboration.
+>
+> **Audit trail:** n8n logs show which SSO email triggered each login: `SSO login: analyst@codesec.in -> owner session (admin@codesec.in)`
+
+> **Local login also available:** `N8N_ADMIN_EMAIL` / `N8N_ADMIN_PASSWORD` (owner account)
+
+---
+
+### 4. MISP (Threat Intelligence)
+
+**SSO Method:** Native OIDC (built-in)
+
+**Login URL:** `https://MISP_DOMAIN` > Click "Login with OIDC"
+
+| SSO Group | MISP Role | Can Do |
+|-----------|----------|--------|
+| **soc-admin** | Auto-created user (default org member) | Access events, attributes, feeds, galaxies. Admin promotion requires manual UI config |
+| **soc-analyst** | Auto-created user (default org member) | Same as above (MISP CE auto-creates with default role) |
+| **soc-readonly** | Auto-created user (default org member) | Same as above (MISP CE auto-creates with default role) |
+
+> **Note:** MISP Community Edition auto-creates SSO users with the default organization role. To promote a user to Org Admin or Site Admin, go to **Administration > List Users** and change their role manually.
+
+> **Local login also available:** `MISP_ADMIN_EMAIL` / `MISP_ADMIN_PASSWORD`
+
+---
+
+### 5. Cortex (Observable Analysis)
+
+**SSO Method:** Native OAuth2 (application.conf)
+
+**Login URL:** `https://CORTEX_DOMAIN` > Click "Login with SSO"
+
+| SSO Group | Cortex Roles | Can Do |
+|-----------|-------------|--------|
+| **soc-admin** | `superadmin` | Full access: manage organizations, users, analyzers, responders. Run any analysis |
+| **soc-analyst** | `read`, `analyze`, `orgadmin` | Run analyzers/responders, view results, manage org settings. Cannot manage other organizations |
+| **soc-readonly** | `read` | View analysis results only. Cannot run analyzers or modify settings |
+
+> **Role mapping** is configured in `configs/thehive/cortex-application.conf` under `auth.sso.groups.mappings`.
+
+> **Local login also available:** `CORTEX_ADMIN_USER` / `CORTEX_ADMIN_PASSWORD`
+
+---
+
+### 6. Grafana (Metrics & Dashboards)
+
+**SSO Method:** Native OAuth2/OIDC (environment variables)
+
+**Login URL:** `https://GRAFANA_DOMAIN` > Click "Sign in with Keycloak"
+
+| SSO Group | Grafana Role | Can Do |
+|-----------|-------------|--------|
+| **soc-admin** | Admin | Full access: create/edit dashboards, manage data sources, users, org settings |
+| **soc-analyst** | Editor | Create/edit dashboards and panels. Cannot manage data sources or org settings |
+| **soc-readonly** | Viewer | View dashboards only. Cannot edit or create |
+
+> **Local login also available:** `GF_ADMIN_USER` / `GF_ADMIN_PASSWORD`
+
+---
+
+### 7. Keycloak (SSO Admin Console)
+
+**URL:** `https://SSO_DOMAIN/admin`
+
+| User | Access |
+|------|--------|
+| Keycloak master admin (`admin` / `KC_ADMIN_PASSWORD`) | Full Keycloak administration: realms, clients, users, groups, mappers |
+| SSO users | No access to Keycloak admin console (they authenticate through it, not manage it) |
+
+---
+
+### Quick Reference — SSO Access Matrix
+
+| Service | soc-admin | soc-analyst | soc-readonly | Local login |
+|---------|:---------:|:-----------:|:------------:|:-----------:|
+| **Wazuh** | Full admin | Full admin | Read-only | admin / WAZUH_INDEXER_PASSWORD |
+| **TheHive** | Org admin (via bridge) | Analyst (via bridge) | Read-only | admin@thehive.local / THEHIVE_ADMIN_PASSWORD |
+| **n8n** | Owner session | Owner session | **Blocked** | N8N_ADMIN_EMAIL / N8N_ADMIN_PASSWORD |
+| **MISP** | Default member | Default member | Default member | MISP_ADMIN_EMAIL / MISP_ADMIN_PASSWORD |
+| **Cortex** | Superadmin | Analyst+orgadmin | Read-only | CORTEX_ADMIN_USER / CORTEX_ADMIN_PASSWORD |
+| **Grafana** | Admin | Editor | Viewer | GF_ADMIN_USER / GF_ADMIN_PASSWORD |
+| **Keycloak** | N/A | N/A | N/A | admin / KC_ADMIN_PASSWORD |
 
 ### Adding More SSO Users
 
-1. Login to Keycloak Admin at `https://sso.yourdomain.com`
+1. Login to Keycloak Admin at `https://SSO_DOMAIN/admin`
 2. Switch to realm **`SOC`**
-3. **Users** > **Add user** > set username, email, name
+3. **Users** > **Add user** > set username (use email), email, first name, last name
 4. **Credentials** > set password (temporary: off)
-5. **Groups** > join `soc-admin`, `soc-analyst`, or `soc-readonly`
+5. **Groups** > join one of: `soc-admin`, `soc-analyst`, or `soc-readonly`
+6. For TheHive: also create a matching local account in TheHive UI
 
 ---
 
@@ -344,24 +473,31 @@ After `post-deploy.py`, all credentials are saved to `.env.deployed` in the depl
 
 ### Service Logins
 
-| Service | URL | Username | Password Key |
-|---------|-----|----------|--------------|
+| Service | URL | Username | Password (.env key) |
+|---------|-----|----------|---------------------|
 | **NPM** | `https://NPM_DOMAIN` | `NPM_ADMIN_EMAIL` | `NPM_ADMIN_PASSWORD` |
-| **Keycloak** | `https://SSO_DOMAIN` | `admin` | `KC_ADMIN_PASSWORD` |
+| **Keycloak** | `https://SSO_DOMAIN/admin` | `admin` | `KC_ADMIN_PASSWORD` |
 | **Wazuh** (local) | `https://WAZUH_DOMAIN` | `admin` | `WAZUH_INDEXER_PASSWORD` |
-| **Wazuh** (SSO) | `https://WAZUH_DOMAIN` | `SSO_ADMIN_EMAIL` | `SSO_ADMIN_PASSWORD` |
-| **n8n** | `https://N8N_DOMAIN` | `N8N_ADMIN_EMAIL` | `N8N_ADMIN_PASSWORD` |
+| **n8n** (owner) | `https://N8N_DOMAIN` | `N8N_ADMIN_EMAIL` | `N8N_ADMIN_PASSWORD` |
 | **MISP** | `https://MISP_DOMAIN` | `MISP_ADMIN_EMAIL` | `MISP_ADMIN_PASSWORD` |
 | **TheHive** | `https://THEHIVE_DOMAIN` | `admin@thehive.local` | `THEHIVE_ADMIN_PASSWORD` |
 | **Cortex** | `https://CORTEX_DOMAIN` | `CORTEX_ADMIN_USER` | `CORTEX_ADMIN_PASSWORD` |
 | **Grafana** | `https://GRAFANA_DOMAIN` | `GF_ADMIN_USER` | `GF_ADMIN_PASSWORD` |
+
+### SSO Logins
+
+| User | Password (.env key) | Group |
+|------|---------------------|-------|
+| `SSO_ADMIN_EMAIL` | `SSO_ADMIN_PASSWORD` | soc-admin |
+| `SSO_ANALYST_EMAIL` | `SSO_ANALYST_PASSWORD` | soc-analyst |
+| `SSO_READONLY_EMAIL` | `SSO_READONLY_PASSWORD` | soc-readonly |
 
 ### Auto-Generated Keys
 
 | Key | Generated By | Used For |
 |-----|-------------|----------|
 | `SSO_CLIENT_SECRET` | post-deploy.py (Keycloak) | All SSO integrations |
-| `OAUTH2_PROXY_COOKIE_SECRET` | post-deploy.py | oauth2-proxy sessions |
+| `OAUTH2_PROXY_COOKIE_SECRET` | post-deploy.py | oauth2-proxy sessions (TheHive + n8n) |
 | `CORTEX_API_KEY` | post-deploy.py | TheHive-Cortex integration |
 | `MISP_API_KEY` | post-deploy.py (from MISP DB) | Cortex MISP analyzer |
 
@@ -507,7 +643,8 @@ docker exec socstack-wazuh-indexer bash -c \
 2. **Security config not applied** (realm was changed but securityadmin not re-run):
    ```bash
    # Check runtime config:
-   curl -sk -u admin:PASSWORD https://localhost:9200/_plugins/_security/api/securityconfig | python3 -m json.tool | grep openid_connect_url
+   curl -sk -u admin:PASSWORD https://localhost:9200/_plugins/_security/api/securityconfig \
+     | python3 -m json.tool | grep openid_connect_url
    # If it shows wrong realm, re-run securityadmin.sh (see Management Commands above)
    ```
 
@@ -530,6 +667,10 @@ docker restart socstack-keycloak
 Check that NPM proxy routes through oauth2-proxy, not directly to the service:
 - `hive.yourdomain.com` should forward to `socstack-oauth2-proxy-hive:4180`
 - `n8n.yourdomain.com` should forward to `socstack-oauth2-proxy-n8n:4180`
+
+### n8n SSO login shows "403 Forbidden"
+
+This means the user's Keycloak group is not in the allowed list. Only **soc-admin** can access n8n. Users in soc-analyst or soc-readonly groups are blocked at the oauth2-proxy level.
 
 ### Wazuh custom-n8n "Couldn't execute command"
 
@@ -605,46 +746,6 @@ nano .env
 sudo ./pre-deploy.sh
 docker compose up -d
 python3 post-deploy.py
-```
-
----
-
-## Network Architecture
-
-All 22 containers communicate over a single Docker bridge network:
-
-```
-socstack_net (172.x.x.0/16)
-|
-|-- socstack-nginx              --> proxies all external HTTPS traffic
-|-- socstack-keycloak           --> SSO provider (browser + all services)
-|-- socstack-keycloak-db        --> Keycloak PostgreSQL (internal only)
-|
-|-- socstack-wazuh-manager      --> receives agent logs (1514, 1515, 514)
-|   +-- custom-n8n integration  --> forwards alerts to n8n webhook
-|-- socstack-wazuh-indexer      --> stores + indexes security data
-|-- socstack-wazuh-dashboard    --> web UI with OIDC SSO
-|
-|-- socstack-thehive            --> case management
-|-- socstack-cortex             --> observable analysis (OAuth2 SSO)
-|-- socstack-cassandra          --> TheHive primary database
-|-- socstack-elasticsearch      --> TheHive + Cortex search index
-|-- socstack-minio              --> TheHive S3 file storage
-|
-|-- socstack-misp-core          --> threat intelligence (OIDC SSO)
-|-- socstack-misp-db            --> MISP MariaDB
-|-- socstack-misp-redis         --> MISP cache (Valkey)
-|-- socstack-misp-modules       --> MISP enrichment modules
-|
-|-- socstack-n8n                --> workflow automation
-|-- socstack-n8n-redis          --> n8n job queue
-|
-|-- socstack-grafana            --> metrics & dashboards (OAuth2 SSO)
-|-- socstack-grafana-renderer   --> image rendering
-|
-|-- socstack-oauth2-proxy-hive  --> TheHive SSO gateway
-|-- socstack-oauth2-proxy-n8n   --> n8n SSO gateway
-+-- socstack-hive-bridge        --> TheHive SSO email-to-creds mapper
 ```
 
 ---

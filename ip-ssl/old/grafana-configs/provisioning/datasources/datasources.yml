@@ -1,0 +1,23 @@
+apiVersion: 1
+
+datasources:
+  # Wazuh Indexer (OpenSearch) - SIEM alerts & events
+  - name: Wazuh-OpenSearch
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: https://wazuh.indexer:9200
+    isDefault: true
+    jsonData:
+      database: "wazuh-alerts-*"
+      flavor: opensearch
+      version: "2.19.1"
+      timeField: "timestamp"
+      tlsSkipVerify: true
+      maxConcurrentShardRequests: 5
+      logMessageField: "rule.description"
+      logLevelField: "rule.level"
+    secureJsonData:
+      basicAuthPassword: SecretPassword
+    basicAuth: true
+    basicAuthUser: admin
+    editable: true

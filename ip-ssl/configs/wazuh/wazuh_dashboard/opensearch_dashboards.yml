@@ -1,0 +1,29 @@
+server.host: 0.0.0.0
+server.port: 5601
+opensearch.hosts: https://wazuh.indexer:9200
+opensearch.ssl.verificationMode: certificate
+opensearch.requestHeadersAllowlist: ["securitytenant","Authorization","security_tenant"]
+opensearch_security.multitenancy.enabled: false
+opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+server.ssl.enabled: true
+server.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
+server.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
+opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
+uiSettings.overrides.defaultRoute: /app/wz-home
+opensearch_security.cookie.ttl: 14400000
+opensearch_security.session.ttl: 14400000
+opensearch_security.session.keepalive: true
+
+# ── Keycloak SSO (OpenID Connect) ───────────────────────────
+opensearch_security.auth.multiple_auth_enabled: true
+opensearch_security.auth.type: ["basicauth","openid"]
+# ── IP:PORT based OIDC URLs (set by post-deploy.py from .env SERVER_IP + SSO_PORT) ──
+opensearch_security.openid.connect_url: "https://YOUR_SERVER_IP:8444/realms/wazuh/.well-known/openid-configuration"
+opensearch_security.openid.base_redirect_url: "https://YOUR_SERVER_IP:8443"
+opensearch_security.openid.client_id: "wazuh-sso"
+opensearch_security.openid.client_secret: "WILL_BE_SET_BY_POST_DEPLOY"
+# Note: post-deploy.py auto-replaces the above placeholders with actual IP:PORT values from .env
+opensearch_security.openid.scope: "openid profile email"
+opensearch_security.openid.header: "Authorization"
+opensearch_security.openid.logout_url: "https://YOUR_SERVER_IP:8444/realms/wazuh/protocol/openid-connect/logout"
+opensearch_security.openid.verify_hostnames: false

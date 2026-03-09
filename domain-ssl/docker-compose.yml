@@ -1,0 +1,708 @@
+# ==============================================================
+# SOC STACK - Unified Docker Compose
+# All services on single shared network: socstack_net
+# Unique container names prefixed with socstack-*
+# All credentials come from .env — never hardcoded here
+# ==============================================================
+
+# Variables are loaded automatically from .env in the same directory.
+# docker-compose reads .env by default — no extra config needed.
+
+services:
+
+  # ============================================================
+  # NGINX PROXY MANAGER - Central Reverse Proxy
+  # ============================================================
+  socstack-nginx:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: socstack-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "60081:81"
+    environment:
+      DISABLE_IPV6: "true"
+    volumes:
+      - ./data/nginx/data:/data
+      - ./data/nginx/letsencrypt:/etc/letsencrypt
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - socstack_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:81"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================
+  # KEYCLOAK SSO + PostgreSQL
+  # ============================================================
+  socstack-keycloak-db:
+    image: postgres:15-alpine
+    container_name: socstack-keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: SocPgsql@2025
+    volumes:
+      - ./data/keycloak_postgres:/var/lib/postgresql/data
+    networks:
+      - socstack_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  socstack-keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: socstack-keycloak
+    command: start
+    restart: unless-stopped
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://socstack-keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: SocPgsql@2025
+      KC_HOSTNAME: ${SSO_DOMAIN}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: 8080
+      KC_PROXY_HEADERS: xforwarded
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: INFO
+    ports:
+      - "8081:8080"
+    depends_on:
+      socstack-keycloak-db:
+        condition: service_healthy
+    volumes:
+      - ./data/keycloak_data:/opt/keycloak/data
+    networks:
+      - socstack_net
+
+  # ============================================================
+  # WAZUH STACK (Manager + Indexer + Dashboard)
+  # ============================================================
+  wazuh.manager:
+    image: wazuh/wazuh-manager:${WAZUH_VERSION}
+    container_name: socstack-wazuh-manager
+    hostname: wazuh.manager
+    restart: always
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 655360
+        hard: 655360
+    ports:
+      - "1514:1514"
+      - "1515:1515"
+      - "514:514/udp"
+      - "55000:55000"
+    environment:
+      - INDEXER_URL=https://wazuh.indexer:9200
+      - INDEXER_USERNAME=${WAZUH_INDEXER_USERNAME}
+      - INDEXER_PASSWORD=${WAZUH_INDEXER_PASSWORD}
+      - FILEBEAT_SSL_VERIFICATION_MODE=full
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+      - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+      - SSL_KEY=/etc/ssl/filebeat.key
+      - API_USERNAME=${WAZUH_API_USER}
+      - API_PASSWORD=${WAZUH_API_PASSWORD}
+    volumes:
+      - socstack_wazuh_api_configuration:/var/ossec/api/configuration
+      - socstack_wazuh_etc:/var/ossec/etc
+      - socstack_wazuh_logs:/var/ossec/logs
+      - socstack_wazuh_queue:/var/ossec/queue
+      - socstack_wazuh_var_multigroups:/var/ossec/var/multigroups
+      - socstack_wazuh_integrations:/var/ossec/integrations
+      - socstack_wazuh_active_response:/var/ossec/active-response/bin
+      - socstack_wazuh_agentless:/var/ossec/agentless
+      - socstack_wazuh_wodles:/var/ossec/wodles
+      - socstack_filebeat_etc:/etc/filebeat
+      - socstack_filebeat_var:/var/lib/filebeat
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca-manager.pem:/etc/ssl/root-ca.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.manager.pem:/etc/ssl/filebeat.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key
+      - ./configs/wazuh/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+      - ./configs/wazuh/wazuh_cluster/custom-n8n:/var/ossec/integrations/custom-n8n
+      - ./configs/wazuh/wazuh_cluster/custom-n8n.py:/var/ossec/integrations/custom-n8n.py
+    networks:
+      - socstack_net
+
+  wazuh.indexer:
+    image: wazuh/wazuh-indexer:${WAZUH_VERSION}
+    container_name: socstack-wazuh-indexer
+    hostname: wazuh.indexer
+    restart: always
+    ports:
+      - "9200:9200"
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - socstack_wazuh_indexer_data:/var/lib/wazuh-indexer
+      # Certs → config/certs/ (Java Security Manager allows this path)
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/indexer-key.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/indexer.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/system-ca.pem:/usr/share/wazuh-indexer/config/certs/system-ca.pem
+      # opensearch.yml → both locations (entrypoint reads root, JVM reads config/)
+      - ./configs/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/opensearch.yml
+      - ./configs/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      # Security configs → config/opensearch-security/ (securityadmin reads here)
+      - ./configs/wazuh/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+      - ./configs/wazuh/wazuh_indexer/config.yml:/usr/share/wazuh-indexer/config/opensearch-security/config.yml
+      - ./configs/wazuh/wazuh_indexer/roles.yml:/usr/share/wazuh-indexer/config/opensearch-security/roles.yml
+      - ./configs/wazuh/wazuh_indexer/roles_mapping.yml:/usr/share/wazuh-indexer/config/opensearch-security/roles_mapping.yml
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/opensearch-security/root-ca.pem
+    networks:
+      - socstack_net
+
+  wazuh.dashboard:
+    image: wazuh/wazuh-dashboard:${WAZUH_VERSION}
+    container_name: socstack-wazuh-dashboard
+    hostname: wazuh.dashboard
+    restart: always
+    ports:
+      - "5601:5601"
+    environment:
+      - INDEXER_USERNAME=${WAZUH_INDEXER_USERNAME}
+      - INDEXER_PASSWORD=${WAZUH_INDEXER_PASSWORD}
+      - WAZUH_API_URL=https://wazuh.manager
+      - DASHBOARD_USERNAME=${WAZUH_DASHBOARD_USER}
+      - DASHBOARD_PASSWORD=${WAZUH_DASHBOARD_PASSWORD}
+      - API_USERNAME=${WAZUH_API_USER}
+      - API_PASSWORD=${WAZUH_API_PASSWORD}
+    volumes:
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+      - ./configs/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem
+      - ./configs/wazuh/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      - ./configs/wazuh/wazuh_dashboard/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+      - socstack_wazuh_dashboard_config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - socstack_wazuh_dashboard_custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    depends_on:
+      - wazuh.indexer
+    links:
+      - wazuh.indexer:wazuh.indexer
+      - wazuh.manager:wazuh.manager
+    networks:
+      - socstack_net
+
+  # ============================================================
+  # THEHIVE + CORTEX + CASSANDRA + ELASTICSEARCH + MINIO
+  # ============================================================
+  socstack-cassandra:
+    image: cassandra:4.1
+    container_name: socstack-cassandra
+    restart: unless-stopped
+    mem_limit: 2048m
+    environment:
+      - MAX_HEAP_SIZE=1024M
+      - HEAP_NEWSIZE=256M
+      - CASSANDRA_CLUSTER_NAME=socstack-thp
+    volumes:
+      - ./data/thehive/cassandra_data:/var/lib/cassandra
+      - ./data/thehive/cassandra_logs:/var/log/cassandra
+    networks:
+      - socstack_net
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  socstack-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.15
+    container_name: socstack-elasticsearch
+    restart: unless-stopped
+    mem_limit: 2048m
+    environment:
+      - discovery.type=single-node
+      - cluster.name=socstack-hive
+      - http.host=0.0.0.0
+      - transport.host=0.0.0.0
+      - xpack.security.enabled=false
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./data/thehive/elasticsearch_data:/usr/share/elasticsearch/data
+      - ./data/thehive/elasticsearch_logs:/usr/share/elasticsearch/logs
+    networks:
+      - socstack_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  socstack-minio:
+    image: minio/minio:latest
+    container_name: socstack-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9090"
+    environment:
+      - MINIO_ROOT_USER=socminioadmin
+      - MINIO_ROOT_PASSWORD=SocMinio@2025
+    ports:
+      - "9002:9000"
+      - "9003:9090"
+    volumes:
+      - ./data/thehive/minio_data:/data
+    networks:
+      - socstack_net
+
+  socstack-thehive:
+    image: strangebee/thehive:5.2
+    container_name: socstack-thehive
+    restart: unless-stopped
+    depends_on:
+      socstack-cassandra:
+        condition: service_healthy
+      socstack-elasticsearch:
+        condition: service_healthy
+      socstack-minio:
+        condition: service_started
+    mem_limit: 2048m
+    ports:
+      - "9000:9000"
+    environment:
+      - JVM_OPTS=-Xms1024M -Xmx1024M
+    command:
+      - --secret
+      - ${THEHIVE_SECRET}
+      - --cql-hostnames
+      - socstack-cassandra
+      - --index-backend
+      - elasticsearch
+      - --es-hostnames
+      - socstack-elasticsearch
+      - --s3-endpoint
+      - http://socstack-minio:9000
+      - --s3-access-key
+      - socminioadmin
+      - --s3-secret-key
+      - SocMinio@2025
+      - --s3-use-path-access-style
+      - --cortex-hostnames
+      - socstack-cortex
+      - --cortex-port
+      - "9001"
+      - --cortex-keys
+      - 20nBlRNOKZxXKGBOUrlIC8OHDQYbYPtl
+      - --config-file
+      - /etc/thehive/application.conf
+    volumes:
+      - ./data/thehive/thehive_data:/opt/thp/thehive/data
+      - ./data/thehive/thehive_files:/opt/thp/thehive/files
+      - ./data/thehive/thehive_index:/opt/thp/thehive/index
+      - ./data/thehive/thehive_logs:/var/log/thehive
+      - ./configs/thehive/thehive-application.conf:/etc/thehive/application.conf:ro
+    networks:
+      - socstack_net
+
+  socstack-cortex:
+    image: thehiveproject/cortex:3.1.8-1
+    container_name: socstack-cortex
+    restart: unless-stopped
+    depends_on:
+      socstack-elasticsearch:
+        condition: service_healthy
+    mem_limit: 1024m
+    ports:
+      - "9001:9001"
+    command:
+      - --es-uri
+      - http://socstack-elasticsearch:9200
+      - --job-directory
+      - /tmp/cortex-jobs
+      - --docker-job-directory
+      - /tmp/cortex-jobs
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/cortex-jobs:/tmp/cortex-jobs
+      - ./configs/thehive/cortex-application.conf:/etc/cortex/application.conf
+      - ./data/thehive/cortex_logs:/var/log/cortex
+    networks:
+      - socstack_net
+
+  # ============================================================
+  # MISP - Threat Intelligence Platform
+  # ============================================================
+  socstack-misp-redis:
+    image: valkey/valkey:7.2
+    container_name: socstack-misp-redis
+    restart: always
+    command: "--requirepass SocRedis@2025 --maxmemory 2gb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10 --save 60 10000"
+    volumes:
+      - socstack_misp_redis_data:/data
+    networks:
+      - socstack_net
+    healthcheck:
+      test: "valkey-cli -a SocRedis@2025 -p 6379 ping | grep -q PONG || exit 1"
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  socstack-misp-db:
+    image: mariadb:10.11
+    container_name: socstack-misp-db
+    restart: always
+    environment:
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=SocMispDb@2025
+      - MYSQL_ROOT_PASSWORD=SocMispRoot@2025
+      - MYSQL_DATABASE=misp
+    command: >
+      --innodb-buffer-pool-size=2048M
+      --innodb-change-buffering=none
+      --innodb-io-capacity=1000
+      --innodb-io-capacity-max=2000
+      --innodb-log-file-size=600M
+      --innodb-read-io-threads=16
+      --innodb-stats-persistent=ON
+      --innodb-write-io-threads=4
+    volumes:
+      - ./data/misp/mysql_data:/var/lib/mysql
+    cap_add:
+      - SYS_NICE
+    networks:
+      - socstack_net
+    healthcheck:
+      test: mysqladmin --user=misp --password=SocMispDb@2025 status
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  socstack-misp-core:
+    image: ghcr.io/misp/misp-docker/misp-core:latest
+    container_name: socstack-misp-core
+    restart: always
+    depends_on:
+      socstack-misp-redis:
+        condition: service_healthy
+      socstack-misp-db:
+        condition: service_healthy
+    ports:
+      - "8443:443"
+    cap_add:
+      - AUDIT_WRITE
+    volumes:
+      - ./data/misp/configs:/var/www/MISP/app/Config/
+      - ./data/misp/logs:/var/www/MISP/app/tmp/logs/
+      - ./data/misp/files:/var/www/MISP/app/files/
+      - ./data/misp/ssl:/etc/nginx/certs/
+      - ./data/misp/gnupg:/var/www/MISP/.gnupg/
+    environment:
+      - BASE_URL=https://${MISP_DOMAIN}
+      - ADMIN_EMAIL=${MISP_ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${MISP_ADMIN_PASSWORD}
+      - ADMIN_ORG=${MISP_ORG}
+      - ENABLE_DB_SETTINGS=true
+      - ENABLE_BACKGROUND_UPDATES=true
+      - DISABLE_IPV6=true
+      - MYSQL_HOST=socstack-misp-db
+      - MYSQL_PORT=3306
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=SocMispDb@2025
+      - MYSQL_DATABASE=misp
+      - REDIS_HOST=socstack-misp-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=SocRedis@2025
+      - PHP_MEMORY_LIMIT=2048M
+      - PHP_MAX_EXECUTION_TIME=300
+      - PHP_UPLOAD_MAX_FILESIZE=50M
+      - PHP_POST_MAX_SIZE=50M
+      - PHP_FCGI_CHILDREN=5
+      - DEBUG=0
+      - X_FRAME_OPTIONS=ALLOWALL
+      - PHP_SESSION_COOKIE_SAMESITE=None
+      - NGINX_X_FORWARDED_FOR=true
+      - NGINX_SET_REAL_IP_FROM=0.0.0.0/0
+      # === OIDC SSO (Keycloak) ===
+      - OIDC_ENABLE=true
+      - OIDC_PROVIDER_URL=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}/.well-known/openid-configuration
+      - OIDC_ISSUER=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}
+      - OIDC_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - OIDC_CLIENT_SECRET=${SSO_CLIENT_SECRET}
+      - OIDC_ROLES_PROPERTY=groups
+      - 'OIDC_ROLES_MAPPING={"soc-admin": 1, "soc-analyst": 3, "soc-readonly": 6}'
+      - OIDC_DEFAULT_ORG=${MISP_ORG}
+      - OIDC_REDIRECT_URI=https://${MISP_DOMAIN}/users/login
+      - OIDC_CODE_CHALLENGE_METHOD=S256
+      - OIDC_AUTH_METHOD=client_secret_basic
+      - OIDC_MIXEDAUTH=true
+      - 'OIDC_SCOPES=["profile", "email", "openid"]'
+      - OIDC_OFFLINE_ACCESS=false
+      - OIDC_VERIFY_SSL=true
+    networks:
+      - socstack_net
+
+  socstack-misp-modules:
+    image: ghcr.io/misp/misp-docker/misp-modules:latest
+    container_name: socstack-misp-modules
+    restart: always
+    depends_on:
+      - socstack-misp-core
+    networks:
+      - socstack_net
+    healthcheck:
+      test: "/bin/bash -c '</dev/tcp/localhost/6666'"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================
+  # N8N - Workflow Automation
+  # ============================================================
+  socstack-n8n-redis:
+    image: redis:7-alpine
+    container_name: socstack-n8n-redis
+    restart: always
+    command: redis-server
+    volumes:
+      - ./data/n8n_redis:/data
+    networks:
+      - socstack_net
+
+  socstack-n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: socstack-n8n
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./data/n8n:/home/node/.n8n
+      - ./configs/n8n/hooks.js:/home/node/.n8n/custom/hooks.js:ro
+    environment:
+      - N8N_PROTOCOL=http
+      - N8N_HOST=${N8N_DOMAIN}
+      - N8N_PORT=5678
+      - WEBHOOK_URL=https://${N8N_DOMAIN}/
+      - N8N_SECURE_COOKIE=false
+      - N8N_CUSTOM_EXTENSIONS=/home/node/.n8n/custom
+      - EXTERNAL_HOOK_FILES=/home/node/.n8n/custom/hooks.js
+      - N8N_FORWARD_AUTH_HEADER=X-Forwarded-Email
+      # Full logout chain: oauth2-proxy sign_out → Keycloak logout → back to n8n
+      - SSO_LOGOUT_URL=https://${N8N_DOMAIN}/oauth2/sign_out?rd=https%3A%2F%2F${SSO_DOMAIN}%2Frealms%2F${KC_WAZUH_REALM:-SOC}%2Fprotocol%2Fopenid-connect%2Flogout%3Fpost_logout_redirect_uri%3Dhttps%3A%2F%2F${N8N_DOMAIN}%2F
+      - N8N_TRUST_PROXY=true
+      - NODE_OPTIONS=--max-http-header-size=65536
+      - N8N_EDITOR_BASE_URL=https://${N8N_DOMAIN}
+      - N8N_PUSH_BACKEND=sse
+    depends_on:
+      - socstack-n8n-redis
+    networks:
+      - socstack_net
+
+  # ============================================================
+  # GRAFANA - Monitoring & Visualization
+  # ============================================================
+  socstack-grafana:
+    image: grafana/grafana-oss:latest
+    container_name: socstack-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN}/
+      - GF_SERVER_DOMAIN=${GRAFANA_DOMAIN}
+      - GF_INSTALL_PLUGINS=grafana-image-renderer
+      - GF_RENDERING_SERVER_URL=http://socstack-grafana-renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://socstack-grafana:3000/
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning
+      - ./configs/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - socstack-grafana-renderer
+    networks:
+      - socstack_net
+
+  socstack-grafana-renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: socstack-grafana-renderer
+    restart: unless-stopped
+    environment:
+      - ENABLE_METRICS=true
+    networks:
+      - socstack_net
+
+  # ============================================================
+  # SSO PROXIES - TheHive + n8n (oauth2-proxy + hive-bridge)
+  # ============================================================
+
+  # TheHive SSO Bridge: maps Keycloak SSO email → TheHive local login
+  # Flow: NPM → oauth2-proxy-hive → hive-bridge → TheHive
+  socstack-hive-bridge:
+    image: node:22-alpine
+    container_name: socstack-hive-bridge
+    restart: unless-stopped
+    working_dir: /app
+    command: node hive-sso-bridge.js
+    volumes:
+      - ./configs/thehive/hive-sso-bridge.js:/app/hive-sso-bridge.js:ro
+    environment:
+      - THEHIVE_URL=http://socstack-thehive:9000
+      - BRIDGE_PORT=4181
+      - SSO_DOMAIN=${SSO_DOMAIN}
+      - SSO_REALM=${KC_WAZUH_REALM:-SOC}
+      - SSO_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - HIVE_DOMAIN=${THEHIVE_DOMAIN}
+      # Admin mapping: Keycloak SSO email → TheHive local credentials
+      - SSO_ADMIN_EMAIL=${SSO_ADMIN_EMAIL}
+      - HIVE_ADMIN_USER=${THEHIVE_ADMIN_USER:-admin@thehive.local}
+      - HIVE_ADMIN_PASSWORD=${THEHIVE_ADMIN_PASSWORD}
+      # Analyst mapping
+      - SSO_ANALYST_EMAIL=${SSO_ANALYST_EMAIL:-${SSO_USER_EMAIL}}
+      - HIVE_ANALYST_USER=${THEHIVE_ANALYST_USER:-${SSO_USER_EMAIL}}
+      - HIVE_ANALYST_PASSWORD=${THEHIVE_ANALYST_PASSWORD}
+      # Readonly mapping (optional)
+      - SSO_READONLY_EMAIL=${SSO_READONLY_EMAIL:-}
+    depends_on:
+      - socstack-thehive
+    networks:
+      - socstack_net
+
+  # oauth2-proxy for TheHive: authenticates via Keycloak, forwards to hive-bridge
+  socstack-oauth2-proxy-hive:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: socstack-oauth2-proxy-hive
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --provider=oidc
+      - --provider-display-name=SOC SSO
+      - --oidc-issuer-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}
+      - --client-id=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - --client-secret=${SSO_CLIENT_SECRET}
+      - --redirect-url=https://${THEHIVE_DOMAIN}/oauth2/callback
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --cookie-secure=true
+      - --cookie-name=_hive_oauth2
+      - --email-domain=*
+      - --skip-provider-button=true
+      - --upstream=http://socstack-hive-bridge:4181
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --pass-access-token=true
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --insecure-oidc-allow-unverified-email=true
+      - --skip-auth-regex=^/api/v1/login$$
+      - --skip-auth-regex=^/api/v1/status$$
+      - --skip-auth-regex=^/api/connector/cortex/job/status$$
+      # Internal token/JWKS endpoints (avoids SSL hairpin issues)
+      - --login-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/auth
+      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/token
+      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/certs
+    depends_on:
+      - socstack-keycloak
+      - socstack-hive-bridge
+    networks:
+      - socstack_net
+
+  # oauth2-proxy for n8n: authenticates via Keycloak, forwards to n8n (hooks.js auto-login)
+  socstack-oauth2-proxy-n8n:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: socstack-oauth2-proxy-n8n
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --provider=oidc
+      - --provider-display-name=SOC SSO
+      - --oidc-issuer-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}
+      - --client-id=${KC_WAZUH_CLIENT_ID:-soc-sso}
+      - --client-secret=${SSO_CLIENT_SECRET}
+      - --redirect-url=https://${N8N_DOMAIN}/oauth2/callback
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --cookie-secure=true
+      - --cookie-name=_n8n_oauth2
+      - --email-domain=*
+      - --skip-provider-button=true
+      - --upstream=http://socstack-n8n:5678
+      - --flush-interval=100ms
+      - --reverse-proxy=true
+      - --oidc-groups-claim=groups
+      - --scope=openid email profile
+      - --allowed-group=soc-admin
+      - --allowed-group=soc-analyst
+      - --whitelist-domain=.${N8N_DOMAIN}
+      - --set-xauthrequest=true
+      - --pass-access-token=true
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --insecure-oidc-allow-unverified-email=true
+      - --skip-auth-regex=^/webhook.*
+      - --skip-auth-regex=^/healthz
+      - --skip-auth-regex=^/rest/oauth2-credential
+      # Internal token/JWKS endpoints (avoids SSL hairpin issues)
+      - --login-url=https://${SSO_DOMAIN}/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/auth
+      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/token
+      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/certs
+    depends_on:
+      - socstack-keycloak
+      - socstack-n8n
+    networks:
+      - socstack_net
+
+# ============================================================
+# VOLUMES (all prefixed with socstack_)
+# ============================================================
+volumes:
+  socstack_wazuh_api_configuration:
+  socstack_wazuh_etc:
+  socstack_wazuh_logs:
+  socstack_wazuh_queue:
+  socstack_wazuh_var_multigroups:
+  socstack_wazuh_integrations:
+  socstack_wazuh_active_response:
+  socstack_wazuh_agentless:
+  socstack_wazuh_wodles:
+  socstack_filebeat_etc:
+  socstack_filebeat_var:
+  socstack_wazuh_indexer_data:
+  socstack_wazuh_dashboard_config:
+  socstack_wazuh_dashboard_custom:
+  socstack_misp_redis_data:
+
+# ============================================================
+# NETWORK (single shared network)
+# ============================================================
+networks:
+  socstack_net:
+    name: socstack_net
+    driver: bridge

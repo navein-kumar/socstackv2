@@ -1,0 +1,84 @@
+---
+_meta:
+  type: "rolesmapping"
+  config_version: 2
+
+# ── Default Role Mappings ───────────────────────────────────
+
+all_access:
+  reserved: true
+  hidden: false
+  backend_roles:
+    - "admin"
+    - "wazuh_admin"
+    - "soc-admin"
+    - "soc-analyst"
+  hosts: []
+  users: []
+  and_backend_roles: []
+  description: "Maps admin, wazuh_admin, soc-admin, soc-analyst to all_access"
+
+own_index:
+  reserved: false
+  hidden: false
+  backend_roles: []
+  hosts: []
+  users:
+    - "*"
+  and_backend_roles: []
+  description: "Allow full access to an index named like the username"
+
+logstash:
+  reserved: false
+  hidden: false
+  backend_roles:
+    - "logstash"
+
+readall:
+  reserved: true
+  hidden: false
+  backend_roles:
+    - "readall"
+
+manage_snapshots:
+  reserved: true
+  hidden: false
+  backend_roles:
+    - "snapshotrestore"
+
+kibana_server:
+  reserved: true
+  hidden: false
+  backend_roles: []
+  hosts: []
+  users:
+    - "kibanaserver"
+
+kibana_user:
+  reserved: false
+  hidden: false
+  backend_roles:
+    - "kibanauser"
+    - "soc-admin"
+    - "soc-analyst"
+    - "soc-readonly"
+  description: "Maps kibanauser and SSO groups to kibana_user"
+
+manage_wazuh_index:
+  reserved: true
+  hidden: false
+  backend_roles: []
+  hosts: []
+  users:
+    - "kibanaserver"
+
+# ── SSO Role Mappings (Keycloak groups → Wazuh roles) ───────
+
+# Keycloak group 'wazuh_user' → read-only access
+wazuh_user:
+  reserved: false
+  hidden: false
+  backend_roles:
+    - "wazuh_user"
+    - "soc-readonly"
+  description: "Maps wazuh_user and soc-readonly to wazuh_user role"

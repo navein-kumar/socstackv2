@@ -1,0 +1,42 @@
+---
+_meta:
+  type: "config"
+  config_version: 2
+
+config:
+  dynamic:
+    http:
+      anonymous_auth_enabled: false
+      xff:
+        enabled: false
+        internalProxies: '192\.168\.0\.10|192\.168\.0\.11'
+    authc:
+      openid_auth_domain:
+        description: "Authenticate via OpenID Connect (Keycloak)"
+        http_enabled: true
+        transport_enabled: false
+        order: 0
+        http_authenticator:
+          type: "openid"
+          challenge: false
+          config:
+            subject_key: "preferred_username"
+            roles_key: "groups"
+            # IP:PORT based OIDC URL (set by post-deploy.py from .env SERVER_IP + SSO_PORT)
+            openid_connect_url: "https://YOUR_SERVER_IP:8444/realms/wazuh/.well-known/openid-configuration"
+            openid_connect_idp:
+              enable_ssl: true
+              verify_hostnames: false
+              pemtrustedcas_filepath: "/usr/share/wazuh-indexer/config/certs/system-ca.pem"
+        authentication_backend:
+          type: "noop"
+      basic_internal_auth_domain:
+        description: "Authenticate via HTTP Basic against internal users database"
+        http_enabled: true
+        transport_enabled: true
+        order: 1
+        http_authenticator:
+          type: "basic"
+          challenge: true
+        authentication_backend:
+          type: "intern"

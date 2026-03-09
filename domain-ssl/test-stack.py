@@ -25,9 +25,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_TXT = os.path.join(BASE_DIR, "test-results.txt")
 RESULTS_JSON = os.path.join(BASE_DIR, "test-results.json")
 
-# ── Load .env.deployed (or .env fallback) ──────────────────
+# ── Load .env first, then .env.deployed overrides ──────────
 env = {}
-for ef in [os.path.join(BASE_DIR, ".env.deployed"), os.path.join(BASE_DIR, ".env")]:
+for ef in [os.path.join(BASE_DIR, ".env"), os.path.join(BASE_DIR, ".env.deployed")]:
     if os.path.exists(ef):
         with open(ef) as f:
             for line in f:
@@ -35,7 +35,6 @@ for ef in [os.path.join(BASE_DIR, ".env.deployed"), os.path.join(BASE_DIR, ".env
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
                     env[k.strip()] = v.strip()
-        break
 
 # ── Test state ─────────────────────────────────────────────
 results = []
@@ -98,7 +97,6 @@ def test_containers():
         "socstack-misp-core", "socstack-misp-db", "socstack-misp-redis", "socstack-misp-modules",
         "socstack-thehive", "socstack-cassandra", "socstack-elasticsearch", "socstack-minio",
         "socstack-cortex",
-        "socstack-grafana", "socstack-grafana-renderer",
     ]
 
     result = subprocess.run(["docker", "ps", "--format", "{{.Names}}\t{{.Status}}"],
@@ -134,7 +132,6 @@ def test_endpoints():
         ("MISP",            "https://localhost:8443/",                   302),
         ("TheHive",         "http://localhost:9000/api/v1/status",      401),
         ("Cortex",          "http://localhost:9001/api/status",          200),
-        ("Grafana",         "http://localhost:3000/",                    302),
         ("Elasticsearch",   "http://localhost:9200/",                    None),  # No host port
     ]
 
@@ -166,8 +163,8 @@ def test_auth():
     # NPM
     def check_npm():
         r = requests.post("http://localhost:60081/api/tokens", json={
-            "identity": env.get("NPM_ADMIN_EMAIL", "admin@codesec.in"),
-            "secret": env.get("NPM_ADMIN_PASSWORD", "SocNpm@2025")
+            "identity": env.get("NPM_ADMIN_EMAIL", "admin@yourdomain.com"),
+            "secret": env.get("NPM_ADMIN_PASSWORD", "ChangeMe_Npm@2025")
         })
         if r.status_code == 200 and "token" in r.json():
             return True, f"Token acquired, expires={r.json().get('expires','?')}"
@@ -213,7 +210,7 @@ def test_auth():
                               "grant_type": "password",
                               "client_id": "admin-cli",
                               "username": env.get("KC_ADMIN_USER", "admin"),
-                              "password": env.get("KC_ADMIN_PASSWORD", "SocKeycloak@2025"),
+                              "password": env.get("KC_ADMIN_PASSWORD", "ChangeMe_Keycloak@2025"),
                           })
         if r.status_code == 200 and "access_token" in r.json():
             return True, "Access token acquired"
@@ -227,9 +224,9 @@ def test_auth():
             # Get from DB
             result = subprocess.run(
                 ["docker", "exec", "socstack-misp-db", "mysql", "-u",
-                 env.get("MISP_DB_USER", "misp"), f"-p{env.get('MISP_DB_PASSWORD', 'SocMispDb@2025')}",
+                 env.get("MISP_DB_USER", "misp"), f"-p{env.get('MISP_DB_PASSWORD', 'ChangeMe_MispDb@2025')}",
                  "misp", "-N", "-e",
-                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@codesec.in')}' LIMIT 1;"],
+                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@yourdomain.com')}' LIMIT 1;"],
                 capture_output=True, text=True, timeout=10
             )
             misp_key = result.stdout.strip()
@@ -247,7 +244,7 @@ def test_auth():
     def check_thehive_admin():
         r = requests.get("http://localhost:9000/api/v1/user/current",
                          auth=(env.get("THEHIVE_ADMIN_USER", "admin@thehive.local"),
-                               env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025")))
+                               env.get("THEHIVE_ADMIN_PASSWORD", "ChangeMe_TheHive@2025")))
         if r.status_code == 200:
             return True, f"profile={r.json().get('profile','?')}"
         return False, f"HTTP {r.status_code}"
@@ -256,8 +253,8 @@ def test_auth():
     # TheHive analyst
     def check_thehive_analyst():
         r = requests.get("http://localhost:9000/api/v1/user/current",
-                         auth=(env.get("THEHIVE_ANALYST_USER", "analyst@codesec.in"),
-                               env.get("THEHIVE_ANALYST_PASSWORD", "SocAnalyst@2025")))
+                         auth=(env.get("THEHIVE_ANALYST_USER", "analyst@yourdomain.com"),
+                               env.get("THEHIVE_ANALYST_PASSWORD", "ChangeMe_Analyst@2025")))
         if r.status_code == 200:
             return True, f"profile={r.json().get('profile','?')} org={r.json().get('organisation','?')}"
         return False, f"HTTP {r.status_code}"
@@ -266,8 +263,8 @@ def test_auth():
     # Cortex admin
     def check_cortex():
         r = requests.post("http://localhost:9001/api/login", json={
-            "user": env.get("CORTEX_ADMIN_USER", "admin@codesec.in"),
-            "password": env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
+            "user": env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com"),
+            "password": env.get("CORTEX_ADMIN_PASSWORD", "ChangeMe_Cortex@2025")
         })
         if r.status_code == 200:
             return True, f"roles={r.json().get('roles','?')}"
@@ -277,23 +274,14 @@ def test_auth():
     # Cortex org admin
     def check_cortex_org():
         r = requests.post("http://localhost:9001/api/login", json={
-            "user": env.get("CORTEX_ORG_ADMIN", "orgadmin@codesec.in"),
-            "password": env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
+            "user": env.get("CORTEX_ORG_ADMIN", "orgadmin@yourdomain.com"),
+            "password": env.get("CORTEX_ADMIN_PASSWORD", "ChangeMe_Cortex@2025")
         })
         if r.status_code == 200:
             return True, f"roles={r.json().get('roles','?')}"
         return False, f"HTTP {r.status_code}"
     test("Login: Cortex OrgAdmin", check_cortex_org)
 
-    # Grafana
-    def check_grafana():
-        r = requests.get("http://localhost:3000/api/org",
-                         auth=(env.get("GF_ADMIN_USER", "admin"),
-                               env.get("GF_ADMIN_PASSWORD", "SocGrafana@2025")))
-        if r.status_code == 200:
-            return True, f"org={r.json().get('name','?')}"
-        return False, f"HTTP {r.status_code}"
-    test("Login: Grafana", check_grafana)
 
 
 # ════════════════════════════════════════════════════════════
@@ -307,7 +295,7 @@ def test_integrations():
     # TheHive → Cortex connectivity
     def check_thehive_cortex():
         auth = (env.get("THEHIVE_ADMIN_USER", "admin@thehive.local"),
-                env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025"))
+                env.get("THEHIVE_ADMIN_PASSWORD", "ChangeMe_TheHive@2025"))
         r = requests.get("http://localhost:9000/api/connector/cortex", auth=auth, timeout=10)
         if r.status_code == 200:
             data = r.json()
@@ -348,9 +336,9 @@ def test_integrations():
         if not key:
             result = subprocess.run(
                 ["docker", "exec", "socstack-misp-db", "mysql", "-u",
-                 env.get("MISP_DB_USER", "misp"), f"-p{env.get('MISP_DB_PASSWORD', 'SocMispDb@2025')}",
+                 env.get("MISP_DB_USER", "misp"), f"-p{env.get('MISP_DB_PASSWORD', 'ChangeMe_MispDb@2025')}",
                  "misp", "-N", "-e",
-                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@codesec.in')}' LIMIT 1;"],
+                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@yourdomain.com')}' LIMIT 1;"],
                 capture_output=True, text=True, timeout=10
             )
             key = result.stdout.strip()
@@ -368,13 +356,13 @@ def test_integrations():
     # TheHive org exists
     def check_thehive_org():
         auth = (env.get("THEHIVE_ADMIN_USER", "admin@thehive.local"),
-                env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025"))
+                env.get("THEHIVE_ADMIN_PASSWORD", "ChangeMe_TheHive@2025"))
         r = requests.post("http://localhost:9000/api/v1/query", auth=auth,
                           headers={"Content-Type": "application/json"},
                           json={"query": [{"_name": "listOrganisation"}]})
         if r.status_code == 200:
             orgs = [o["name"] for o in r.json()]
-            target = env.get("THEHIVE_ORG_NAME", "CODESEC")
+            target = env.get("THEHIVE_ORG_NAME", "YOURORG")
             if target in orgs:
                 return True, f"Org '{target}' exists, total orgs: {len(orgs)}"
             return False, f"Org '{target}' not found. Existing: {orgs}"
@@ -385,8 +373,8 @@ def test_integrations():
     def check_cortex_org():
         session = requests.Session()
         r = session.post("http://localhost:9001/api/login", json={
-            "user": env.get("CORTEX_ADMIN_USER", "admin@codesec.in"),
-            "password": env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
+            "user": env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com"),
+            "password": env.get("CORTEX_ADMIN_PASSWORD", "ChangeMe_Cortex@2025")
         })
         if r.status_code != 200:
             return False, "Login failed"
@@ -397,7 +385,7 @@ def test_integrations():
         if r.status_code == 200:
             orgs = r.json()
             names = [o.get("name", "?") for o in orgs]
-            target = env.get("CORTEX_ORG_NAME", "codesec")
+            target = env.get("CORTEX_ORG_NAME", "yourorg")
             if target in names:
                 return True, f"Org '{target}' exists"
             return False, f"Org '{target}' not found. Existing: {names}"
@@ -415,36 +403,24 @@ def test_integrations():
         return False, f"HTTP {r.status_code}"
     test("Integration: Wazuh Manager → Indexer", check_wazuh_connection)
 
-    # Grafana datasource
-    def check_grafana_ds():
-        r = requests.get("http://localhost:3000/api/datasources",
-                         auth=(env.get("GF_ADMIN_USER", "admin"),
-                               env.get("GF_ADMIN_PASSWORD", "SocGrafana@2025")))
-        if r.status_code == 200:
-            ds = r.json()
-            names = [d.get("name", "?") for d in ds]
-            return True, f"Datasources: {names}"
-        return False, f"HTTP {r.status_code}"
-    test("Integration: Grafana Datasources", check_grafana_ds, critical=False)
-
     # Keycloak SSO realm
     def check_kc_realm():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
         r = requests.get(f"http://localhost:8081/realms/{realm}")
         if r.status_code == 200:
             return True, f"Realm '{realm}' accessible, issuer={r.json().get('issuer','?')[:50]}"
         return False, f"HTTP {r.status_code}"
-    test("Integration: Keycloak Wazuh Realm", check_kc_realm)
+    test("Integration: Keycloak SSO Realm", check_kc_realm)
 
     # Keycloak SSO client exists
     def check_kc_client():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        client_id = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
         # Get admin token
         r = requests.post("http://localhost:8081/realms/master/protocol/openid-connect/token",
                           data={"grant_type": "password", "client_id": "admin-cli",
                                 "username": env.get("KC_ADMIN_USER", "admin"),
-                                "password": env.get("KC_ADMIN_PASSWORD", "SocKeycloak@2025")})
+                                "password": env.get("KC_ADMIN_PASSWORD", "ChangeMe_Keycloak@2025")})
         if r.status_code != 200:
             return False, "Cannot get admin token"
         token = r.json()["access_token"]
@@ -458,13 +434,13 @@ def test_integrations():
 
     # Keycloak SSO admin user login
     def check_kc_sso_admin():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        client_id = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
-        secret = env.get("KC_WAZUH_CLIENT_SECRET", "")
-        user = env.get("SSO_ADMIN_EMAIL", "admin@codesec.in")
-        pwd = env.get("SSO_ADMIN_PASSWORD", "SocSsoAdmin@2025")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
+        secret = env.get("SSO_CLIENT_SECRET", "")
+        user = env.get("SSO_ADMIN_EMAIL", "admin@yourdomain.com")
+        pwd = env.get("SSO_ADMIN_PASSWORD", "ChangeMe_SsoAdmin@2025")
         if not secret:
-            return False, "No client secret in .env.deployed"
+            return False, "No SSO_CLIENT_SECRET in .env/.env.deployed"
         data = {"grant_type": "password", "client_id": client_id,
                 "client_secret": secret, "scope": "openid profile email",
                 "username": user, "password": pwd}
@@ -482,15 +458,15 @@ def test_integrations():
         return False, f"HTTP {r.status_code}: {r.text[:100]}"
     test("Integration: SSO Admin Login", check_kc_sso_admin)
 
-    # Keycloak SSO user login
-    def check_kc_sso_user():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        client_id = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
-        secret = env.get("KC_WAZUH_CLIENT_SECRET", "")
-        user = env.get("SSO_USER_EMAIL", "user@codesec.in")
-        pwd = env.get("SSO_USER_PASSWORD", "SocSsoUser@2025")
+    # Keycloak SSO analyst user login
+    def check_kc_sso_analyst():
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
+        secret = env.get("SSO_CLIENT_SECRET", "")
+        user = env.get("SSO_ANALYST_EMAIL", "analyst@yourdomain.com")
+        pwd = env.get("SSO_ANALYST_PASSWORD", "ChangeMe_SsoAnalyst@2025")
         if not secret:
-            return False, "No client secret in .env.deployed"
+            return False, "No SSO_CLIENT_SECRET in .env/.env.deployed"
         data = {"grant_type": "password", "client_id": client_id,
                 "client_secret": secret, "scope": "openid profile email",
                 "username": user, "password": pwd}
@@ -503,14 +479,14 @@ def test_integrations():
             import json as j
             d = j.loads(payload)
             groups = d.get("groups", [])
-            return True, f"SSO user '{user}' authenticated, groups={groups}"
+            return True, f"SSO analyst '{user}' authenticated, groups={groups}"
         return False, f"HTTP {r.status_code}: {r.text[:100]}"
-    test("Integration: SSO User Login", check_kc_sso_user)
+    test("Integration: SSO Analyst Login", check_kc_sso_analyst)
 
     # Wazuh OpenID well-known endpoint accessible
     def check_wazuh_oidc():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        sso_domain = env.get("SSO_DOMAIN", "sso.codesec.in")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        sso_domain = env.get("SSO_DOMAIN", "sso.yourdomain.com")
         # Check if the OIDC well-known endpoint is reachable from inside docker
         result = subprocess.run(
             ["docker", "exec", "socstack-wazuh-indexer", "curl", "-sk",
@@ -539,8 +515,8 @@ def test_proxy_ssl():
     # Get NPM token
     try:
         r = requests.post("http://localhost:60081/api/tokens", json={
-            "identity": env.get("NPM_ADMIN_EMAIL", "admin@codesec.in"),
-            "secret": env.get("NPM_ADMIN_PASSWORD", "SocNpm@2025")
+            "identity": env.get("NPM_ADMIN_EMAIL", "admin@yourdomain.com"),
+            "secret": env.get("NPM_ADMIN_PASSWORD", "ChangeMe_Npm@2025")
         })
         if r.status_code != 200:
             log("  ✗ Cannot authenticate to NPM, skipping proxy tests")

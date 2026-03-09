@@ -1,6 +1,12 @@
 # ==============================================================
 # SOC STACK (IP-SSL) - Docker Compose
 # IP-based deployment: self-signed SSL + per-service ports
+#
+# IMAGE PINNING: All images are pinned to exact versions tested
+# on 2026-03-09. Do NOT change to :latest — upstream updates
+# can break SSO hooks, config formats, and API compatibility.
+# To upgrade: test the new version locally first, then update
+# the tag here. See IMAGE-VERSIONS.md for the full version map.
 # Uses Nginx Proxy Manager (same as domain-ssl) + custom port config
 #
 # Port map (all via NPM with self-signed SSL):
@@ -25,7 +31,7 @@ services:
   # Same image as domain-ssl; custom ports via nginx/http.conf
   # ============================================================
   socstack-nginx:
-    image: jc21/nginx-proxy-manager:latest
+    image: jc21/nginx-proxy-manager:2.14.0
     container_name: socstack-nginx
     restart: unless-stopped
     ports:
@@ -81,7 +87,7 @@ services:
       retries: 5
 
   socstack-keycloak:
-    image: quay.io/keycloak/keycloak:latest
+    image: quay.io/keycloak/keycloak:26.5.3
     container_name: socstack-keycloak
     # IP-based: hostname-strict=false, proxy-headers for forwarded IP:PORT
     command: start --proxy-headers=xforwarded --hostname-strict=false --http-enabled=true
@@ -289,7 +295,7 @@ services:
       start_period: 60s
 
   socstack-minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: socstack-minio
     restart: unless-stopped
     command: server /data --console-address ":9090"
@@ -429,7 +435,8 @@ services:
       start_period: 30s
 
   socstack-misp-core:
-    image: ghcr.io/misp/misp-docker/misp-core:latest
+    # MISP has no version tags — pinned by digest (MISP 2.5.32, built 2026-02-11)
+    image: ghcr.io/misp/misp-docker/misp-core@sha256:3c1074796a44f07f5c7044880872bc8507f3f8d06941fde4f3878e0da4cef828
     container_name: socstack-misp-core
     restart: always
     depends_on:
@@ -477,9 +484,9 @@ services:
       - NGINX_SET_REAL_IP_FROM=0.0.0.0/0
       # === OIDC SSO (Keycloak) ===
       - OIDC_ENABLE=true
-      - OIDC_PROVIDER_URL=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-wazuh}/.well-known/openid-configuration
-      - OIDC_ISSUER=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-wazuh}
-      - OIDC_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-wazuh-sso}
+      - OIDC_PROVIDER_URL=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-SOC}/.well-known/openid-configuration
+      - OIDC_ISSUER=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-SOC}
+      - OIDC_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-soc-sso}
       - OIDC_CLIENT_SECRET=${SSO_CLIENT_SECRET}
       - OIDC_ROLES_PROPERTY=groups
       - 'OIDC_ROLES_MAPPING={"soc-admin": 1, "soc-analyst": 3, "soc-readonly": 6}'
@@ -495,7 +502,8 @@ services:
       - socstack_net
 
   socstack-misp-modules:
-    image: ghcr.io/misp/misp-docker/misp-modules:latest
+    # MISP modules — pinned by digest (misp-modules 3.0.5)
+    image: ghcr.io/misp/misp-docker/misp-modules@sha256:40b16ec4773c7911ad78323b3a5b7006fc55d12c50ce755630aee81dbabf57da
     container_name: socstack-misp-modules
     restart: always
     depends_on:
@@ -523,7 +531,7 @@ services:
       - socstack_net
 
   socstack-n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n:2.7.5
     container_name: socstack-n8n
     restart: unless-stopped
     dns:
@@ -545,8 +553,9 @@ services:
       - N8N_CUSTOM_EXTENSIONS=/home/node/.n8n/custom
       - EXTERNAL_HOOK_FILES=/home/node/.n8n/custom/hooks.js
       - N8N_FORWARD_AUTH_HEADER=X-Forwarded-Email
+      - N8N_OWNER_EMAIL=${N8N_ADMIN_EMAIL}
       # Full logout chain: oauth2-proxy sign_out → Keycloak logout → back to n8n
-      - SSO_LOGOUT_URL=https://${SERVER_IP}:${N8N_PORT:-8445}/oauth2/sign_out?rd=https%3A%2F%2F${SERVER_IP}%3A${SSO_PORT:-8444}%2Frealms%2F${KC_WAZUH_REALM:-wazuh}%2Fprotocol%2Fopenid-connect%2Flogout%3Fpost_logout_redirect_uri%3Dhttps%3A%2F%2F${SERVER_IP}%3A${N8N_PORT:-8445}%2F
+      - SSO_LOGOUT_URL=https://${SERVER_IP}:${N8N_PORT:-8445}/oauth2/sign_out?rd=https%3A%2F%2F${SERVER_IP}%3A${SSO_PORT:-8444}%2Frealms%2F${KC_WAZUH_REALM:-SOC}%2Fprotocol%2Fopenid-connect%2Flogout%3Fpost_logout_redirect_uri%3Dhttps%3A%2F%2F${SERVER_IP}%3A${N8N_PORT:-8445}%2F
       - N8N_TRUST_PROXY=true
       - NODE_OPTIONS=--max-http-header-size=65536
       - N8N_EDITOR_BASE_URL=https://${SERVER_IP}:${N8N_PORT:-8445}
@@ -572,8 +581,8 @@ services:
       - THEHIVE_URL=http://socstack-thehive:9000
       - BRIDGE_PORT=4181
       - SSO_DOMAIN=${SERVER_IP}:${SSO_PORT:-8444}
-      - SSO_REALM=${KC_WAZUH_REALM:-wazuh}
-      - SSO_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-wazuh-sso}
+      - SSO_REALM=${KC_WAZUH_REALM:-SOC}
+      - SSO_CLIENT_ID=${KC_WAZUH_CLIENT_ID:-soc-sso}
       - HIVE_DOMAIN=${SERVER_IP}:${THEHIVE_PORT:-8447}
       - SSO_ADMIN_EMAIL=${SSO_ADMIN_EMAIL}
       - HIVE_ADMIN_USER=${THEHIVE_ADMIN_USER:-admin@thehive.local}
@@ -595,8 +604,8 @@ services:
       - --http-address=0.0.0.0:4180
       - --provider=oidc
       - --provider-display-name=SOC SSO
-      - --oidc-issuer-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-wazuh}
-      - --client-id=${KC_WAZUH_CLIENT_ID:-wazuh-sso}
+      - --oidc-issuer-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-SOC}
+      - --client-id=${KC_WAZUH_CLIENT_ID:-soc-sso}
       - --client-secret=${SSO_CLIENT_SECRET}
       - --redirect-url=https://${SERVER_IP}:${THEHIVE_PORT:-8447}/oauth2/callback
       - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
@@ -616,9 +625,9 @@ services:
       - --skip-auth-regex=^/api/v1/login$$
       - --skip-auth-regex=^/api/v1/status$$
       - --skip-auth-regex=^/api/connector/cortex/job/status$$
-      - --login-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-wazuh}/protocol/openid-connect/auth
-      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-wazuh}/protocol/openid-connect/token
-      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-wazuh}/protocol/openid-connect/certs
+      - --login-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/auth
+      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/token
+      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/certs
     depends_on:
       - socstack-keycloak
       - socstack-hive-bridge
@@ -637,8 +646,8 @@ services:
       - --http-address=0.0.0.0:4180
       - --provider=oidc
       - --provider-display-name=SOC SSO
-      - --oidc-issuer-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-wazuh}
-      - --client-id=${KC_WAZUH_CLIENT_ID:-wazuh-sso}
+      - --oidc-issuer-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-SOC}
+      - --client-id=${KC_WAZUH_CLIENT_ID:-soc-sso}
       - --client-secret=${SSO_CLIENT_SECRET}
       - --redirect-url=https://${SERVER_IP}:${N8N_PORT:-8445}/oauth2/callback
       - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
@@ -666,9 +675,9 @@ services:
       - --skip-auth-regex=^/webhook.*
       - --skip-auth-regex=^/healthz
       - --skip-auth-regex=^/rest/oauth2-credential
-      - --login-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-wazuh}/protocol/openid-connect/auth
-      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-wazuh}/protocol/openid-connect/token
-      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-wazuh}/protocol/openid-connect/certs
+      - --login-url=https://${SERVER_IP}:${SSO_PORT:-8444}/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/auth
+      - --redeem-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/token
+      - --oidc-jwks-url=http://socstack-keycloak:8080/realms/${KC_WAZUH_REALM:-SOC}/protocol/openid-connect/certs
     depends_on:
       - socstack-keycloak
       - socstack-n8n

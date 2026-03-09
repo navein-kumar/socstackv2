@@ -1,5 +1,5 @@
 /**
- * n8n Community Edition SSO Hook (v3.1 - Shared Owner Session + Origin Fix)
+ * n8n Community Edition SSO Hook (v3.2 - Shared Owner Session + Origin Fix)
  *
  * Bypasses n8n CE's workflow sharing limitation by logging ALL SSO users
  * into the single owner account. This way everyone sees the same workflows,
@@ -27,6 +27,14 @@
  *   oauth2-proxy strips the Origin header when proxying to the upstream.
  *   This hook reconstructs the Origin from X-Forwarded-Host + X-Forwarded-Proto
  *   headers that oauth2-proxy DOES set (with --reverse-proxy=true).
+ *
+ * v3.2 fix:
+ *   n8n 2.7+ changed the User entity — the `role` column became a ManyToOne
+ *   relation to a separate Role table. Using `UserRepo.find({ relations: ["role"] })`
+ *   causes TypeORM to not load all scalar columns (email, password, etc.).
+ *   issueCookie() needs email+password to create a valid JWT hash.
+ *   Fix: use createQueryBuilder to explicitly select all needed fields,
+ *   then join the role relation separately.
  *
  * Environment variables:
  *   N8N_FORWARD_AUTH_HEADER  - Header name from oauth2-proxy (default: X-Forwarded-Email)
@@ -62,38 +70,70 @@ module.exports = {
 
         // ── Find the n8n owner account (once at startup) ──
         // The owner is the first user created by post-deploy.py with role global:owner
+        //
+        // IMPORTANT: n8n 2.7+ changed User.role from a string column to a ManyToOne
+        // relation (Role entity). Using UserRepo.find({ relations: ["role"] }) causes
+        // TypeORM to NOT load scalar columns like email/password. issueCookie() needs
+        // these fields to create a valid JWT. We use createQueryBuilder to explicitly
+        // select all user columns + join the role relation.
         let ownerUser = null;
         const ownerEmail = process.env.N8N_OWNER_EMAIL || "";
 
         async function findOwner() {
           if (ownerUser) return ownerUser;
 
-          // Strategy 1: Find by env var email
-          if (ownerEmail) {
-            ownerUser = await UserRepo.findOne({
-              where: { email: ownerEmail.toLowerCase() },
-              relations: ["role", "authIdentities"],
-            });
+          try {
+            // Use queryBuilder to ensure ALL user columns are selected
+            // alongside the role relation (avoids the n8n 2.7+ TypeORM issue)
+            const qb = UserRepo.createQueryBuilder("user")
+              .leftJoinAndSelect("user.role", "role");
+
+            if (ownerEmail) {
+              // Strategy 1: Find by env var email
+              ownerUser = await qb
+                .where("user.email = :email", { email: ownerEmail.toLowerCase() })
+                .getOne();
+
+              if (ownerUser) {
+                log("info", `Owner found by email: ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
+                return ownerUser;
+              }
+            }
+
+            // Strategy 2: Find user with global:owner role
+            ownerUser = await UserRepo.createQueryBuilder("user")
+              .leftJoinAndSelect("user.role", "role")
+              .where("role.slug = :slug", { slug: "global:owner" })
+              .getOne();
+
             if (ownerUser) {
-              log("info", `Owner found by email: ${ownerUser.email} (role: ${ownerUser.role?.name || ownerUser.role?.slug || "?"})`);
+              log("info", `Owner found by role: ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
               return ownerUser;
             }
-          }
 
-          // Strategy 2: Find user with global:owner role
-          const allUsers = await UserRepo.find({ relations: ["role", "authIdentities"] });
-          ownerUser = allUsers.find(
-            (u) => u.role && (u.role.slug === "global:owner" || u.role.name === "owner")
-          );
-
-          if (ownerUser) {
-            log("info", `Owner found by role: ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
-          } else if (allUsers.length > 0) {
             // Strategy 3: Fallback to first user (always the owner in n8n CE)
-            ownerUser = allUsers[0];
-            log("info", `Owner fallback (first user): ${ownerUser.email}`);
-          } else {
-            log("error", "No users found in database — owner lookup failed");
+            ownerUser = await UserRepo.createQueryBuilder("user")
+              .leftJoinAndSelect("user.role", "role")
+              .orderBy("user.createdAt", "ASC")
+              .getOne();
+
+            if (ownerUser) {
+              log("info", `Owner fallback (first user): ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
+            } else {
+              log("error", "No users found in database — owner lookup failed");
+            }
+          } catch (err) {
+            log("error", `Owner lookup error: ${err.message}`);
+            // Fallback: try the simple find without relations
+            try {
+              const users = await UserRepo.find();
+              if (users.length > 0) {
+                ownerUser = users[0];
+                log("info", `Owner fallback (simple find): id=${ownerUser.id}, email=${ownerUser.email}`);
+              }
+            } catch (e2) {
+              log("error", `Owner fallback also failed: ${e2.message}`);
+            }
           }
 
           return ownerUser;

@@ -63,7 +63,7 @@ done < "$ENV_FILE"
 ok "Loaded .env"
 
 # Validate required fields
-REQUIRED_VARS="SERVER_IP SSO_DOMAIN WAZUH_DOMAIN N8N_DOMAIN MISP_DOMAIN THEHIVE_DOMAIN CORTEX_DOMAIN GRAFANA_DOMAIN NPM_DOMAIN NPM_ADMIN_EMAIL"
+REQUIRED_VARS="SERVER_IP SSO_DOMAIN WAZUH_DOMAIN N8N_DOMAIN MISP_DOMAIN THEHIVE_DOMAIN CORTEX_DOMAIN NPM_DOMAIN NPM_ADMIN_EMAIL"
 for var in $REQUIRED_VARS; do
     val="${!var:-}"
     if [ -z "$val" ] || [[ "$val" == *"YOUR_"* ]] || [[ "$val" == *"yourdomain"* ]] || [[ "$val" == *"ChangeMe"* ]]; then
@@ -82,7 +82,7 @@ ok "All required variables set"
 # No need to set DEPLOY_DIR in .env — just run the script from your deploy folder
 DEPLOY_DIR="$SCRIPT_DIR"
 info "DEPLOY_DIR auto-detected: $DEPLOY_DIR"
-ALL_DOMAINS="$SSO_DOMAIN $WAZUH_DOMAIN $N8N_DOMAIN $MISP_DOMAIN $THEHIVE_DOMAIN $CORTEX_DOMAIN $GRAFANA_DOMAIN $NPM_DOMAIN"
+ALL_DOMAINS="$SSO_DOMAIN $WAZUH_DOMAIN $N8N_DOMAIN $MISP_DOMAIN $THEHIVE_DOMAIN $CORTEX_DOMAIN $NPM_DOMAIN"
 
 # ── Auto-generate SSO secrets (if not already set in .env) ──
 # These are needed BEFORE docker-compose up so oauth2-proxy containers
@@ -270,7 +270,6 @@ DATA_DIRS=(
     "data/misp/mysql_data"
     "data/n8n"
     "data/n8n_redis"
-    "data/grafana"
 )
 
 for dir in "${DATA_DIRS[@]}"; do
@@ -285,9 +284,6 @@ CONFIG_DIRS=(
     "configs/wazuh/wazuh_dashboard"
     "configs/wazuh/wazuh_cluster"
     "configs/thehive"
-    "configs/grafana/provisioning/datasources"
-    "configs/grafana/provisioning/dashboards"
-    "configs/grafana/dashboards"
 )
 
 for dir in "${CONFIG_DIRS[@]}"; do
@@ -340,28 +336,6 @@ echo "── 7. Permissions ─────────────────�
 chown -R 1000:0 "$DEPLOY_DIR/data/keycloak_data"
 ok "Keycloak data dir: uid 1000 (gzip theme cache)"
 
-# Grafana runs as uid 472
-chown -R 472:0 "$DEPLOY_DIR/data/grafana"
-ok "Grafana data dir: uid 472"
-
-# Grafana OpenSearch datasource plugin (download if not present)
-GF_PLUGIN_DIR="$DEPLOY_DIR/data/grafana/plugins/grafana-opensearch-datasource"
-if [ ! -d "$GF_PLUGIN_DIR" ]; then
-    info "Downloading Grafana OpenSearch datasource plugin..."
-    GF_PLUGIN_URL="https://github.com/grafana/opensearch-datasource/releases/download/v2.22.1/grafana-opensearch-datasource-2.22.1.linux_amd64.zip"
-    mkdir -p "$DEPLOY_DIR/data/grafana/plugins"
-    if curl -sL -o /tmp/grafana-opensearch-plugin.zip "$GF_PLUGIN_URL" 2>/dev/null; then
-        unzip -qo /tmp/grafana-opensearch-plugin.zip -d "$DEPLOY_DIR/data/grafana/plugins/" 2>/dev/null
-        rm -f /tmp/grafana-opensearch-plugin.zip
-        chown -R 472:0 "$DEPLOY_DIR/data/grafana/plugins/"
-        ok "Grafana OpenSearch plugin installed"
-    else
-        warn "Could not download Grafana OpenSearch plugin (check internet/DNS)"
-    fi
-else
-    ok "Grafana OpenSearch plugin already installed"
-fi
-
 # TheHive/Cortex dirs
 chown -R 1000:1000 "$DEPLOY_DIR/data/thehive/thehive_data" "$DEPLOY_DIR/data/thehive/thehive_files" "$DEPLOY_DIR/data/thehive/thehive_index" 2>/dev/null || true
 ok "TheHive data dirs: uid 1000"
@@ -381,8 +355,11 @@ if [ -f "$N8N_INTEGRATION_DIR/custom-n8n" ] && [ -f "$N8N_INTEGRATION_DIR/custom
     # Fix Windows CRLF line endings → Unix LF (critical: #!/bin/sh\r breaks execution)
     sed -i 's/\r$//' "$N8N_INTEGRATION_DIR/custom-n8n" "$N8N_INTEGRATION_DIR/custom-n8n.py"
     ok "custom-n8n: CRLF → LF line endings fixed"
+    # Wazuh manager runs custom integrations as root:wazuh (gid 101) with mode 750
+    # Set this on the host so bind-mounted files have correct ownership from first boot
+    chown 0:101 "$N8N_INTEGRATION_DIR/custom-n8n" "$N8N_INTEGRATION_DIR/custom-n8n.py"
     chmod 750 "$N8N_INTEGRATION_DIR/custom-n8n" "$N8N_INTEGRATION_DIR/custom-n8n.py"
-    ok "custom-n8n integration scripts: mode 750"
+    ok "custom-n8n integration: root:wazuh(101) mode 750"
 else
     warn "custom-n8n integration scripts not found in $N8N_INTEGRATION_DIR"
 fi

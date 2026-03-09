@@ -404,17 +404,17 @@ def test_integrations():
 
     # Keycloak SSO realm
     def check_kc_realm():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
         r = requests.get(f"http://localhost:8081/realms/{realm}")
         if r.status_code == 200:
             return True, f"Realm '{realm}' accessible, issuer={r.json().get('issuer','?')[:50]}"
         return False, f"HTTP {r.status_code}"
-    test("Integration: Keycloak Wazuh Realm", check_kc_realm)
+    test("Integration: Keycloak SSO Realm", check_kc_realm)
 
     # Keycloak SSO client exists
     def check_kc_client():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        client_id = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
         r = requests.post("http://localhost:8081/realms/master/protocol/openid-connect/token",
                           data={"grant_type": "password", "client_id": "admin-cli",
                                 "username": env.get("KC_ADMIN_USER", "admin"),
@@ -432,8 +432,8 @@ def test_integrations():
 
     # Keycloak SSO admin user login
     def check_kc_sso_admin():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        client_id = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
         secret = env.get("KC_WAZUH_CLIENT_SECRET", "") or env.get("SSO_CLIENT_SECRET", "")
         user = env.get("SSO_ADMIN_EMAIL", "admin@local.lab")
         pwd = env.get("SSO_ADMIN_PASSWORD", "SocSsoAdmin@2025")
@@ -457,8 +457,8 @@ def test_integrations():
 
     # Keycloak SSO user login
     def check_kc_sso_user():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
-        client_id = env.get("KC_WAZUH_CLIENT_ID", "wazuh-sso")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
+        client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
         secret = env.get("KC_WAZUH_CLIENT_SECRET", "") or env.get("SSO_CLIENT_SECRET", "")
         # Prefer SSO_ANALYST_EMAIL (from .env.deployed) over SSO_USER_EMAIL (from .env)
         user = env.get("SSO_ANALYST_EMAIL") or env.get("SSO_USER_EMAIL", "user@local.lab")
@@ -483,7 +483,7 @@ def test_integrations():
 
     # Wazuh OpenID well-known endpoint accessible
     def check_wazuh_oidc():
-        realm = env.get("KC_WAZUH_REALM", "wazuh")
+        realm = env.get("KC_WAZUH_REALM", "SOC")
         # Check from inside wazuh-indexer container (via container hostname)
         result = subprocess.run(
             ["docker", "exec", "socstack-wazuh-indexer", "curl", "-sk",

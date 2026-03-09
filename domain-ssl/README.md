@@ -331,7 +331,7 @@ After `post-deploy.py` completes, some UI configurations must be done manually.
 | SSO Group | TheHive Local Account Mapped | TheHive Role | Can Do |
 |-----------|------------------------------|-------------|--------|
 | **soc-admin** | `THEHIVE_ADMIN_USER` (admin@thehive.local) | org-admin | Full access: cases, alerts, tasks, observables, org settings, user management |
-| **soc-analyst** | `THEHIVE_ANALYST_USER` (analyst@codesec.in) | analyst | Create/edit cases, manage tasks & observables. Cannot manage org settings or users |
+| **soc-analyst** | `THEHIVE_ANALYST_USER` (analyst@yourdomain.com) | analyst | Create/edit cases, manage tasks & observables. Cannot manage org settings or users |
 | **soc-readonly** | read-only account (if configured) | read-only | View cases and alerts only. Cannot create or modify |
 
 > **Note:** The bridge requires matching TheHive local accounts. `post-deploy.py` creates the admin and analyst accounts automatically. To add more SSO users, add them to a Keycloak group and create a matching local TheHive account.
@@ -364,9 +364,9 @@ n8n Community Edition does not support workflow sharing, RBAC, or team workspace
 6. The SSO user now sees the owner's workspace — all workflows, credentials, and executions
 
 ```
-soc-admin@codesec.in   ──┐
+soc-admin@yourdomain.com   ──┐
                           ├── oauth2-proxy (Keycloak auth) ──> hooks.js ──> owner session
-analyst@codesec.in     ──┘                                                     |
+analyst@yourdomain.com     ──┘                                                     |
                                                                     All shared workflows
                                                                     (Wazuh alerts, SOAR, etc.)
 ```
@@ -375,7 +375,7 @@ analyst@codesec.in     ──┘                                                
 >
 > **All SSO users share one workspace** — any workflow created by one user is visible to all. This is by design for SOC team collaboration.
 >
-> **Audit trail:** n8n logs show which SSO email triggered each login: `SSO login: analyst@codesec.in -> owner session (admin@codesec.in)`
+> **Audit trail:** n8n logs show which SSO email triggered each login: `SSO login: analyst@yourdomain.com -> owner session (admin@yourdomain.com)`
 
 > **Local login also available:** `N8N_ADMIN_EMAIL` / `N8N_ADMIN_PASSWORD` (owner account)
 

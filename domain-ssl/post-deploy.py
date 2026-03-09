@@ -58,14 +58,14 @@ N8N_PASS = env.get("N8N_ADMIN_PASSWORD", "SocN8n@2025")
 
 CORTEX_ADMIN = env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com")
 CORTEX_PASS = env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
-CORTEX_ORG = env.get("CORTEX_ORG_NAME", "codesec")
+CORTEX_ORG = env.get("CORTEX_ORG_NAME", "yourorg")
 CORTEX_ORG_ADMIN = env.get("CORTEX_ORG_ADMIN", "orgadmin@yourdomain.com")
 
 THEHIVE_USER = env.get("THEHIVE_ADMIN_USER", "admin@thehive.local")
 THEHIVE_PASS = env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025")
 THEHIVE_DEFAULT = env.get("THEHIVE_DEFAULT_PASSWORD", "secret")
-THEHIVE_ORG = env.get("THEHIVE_ORG_NAME", "CODESEC")
-THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "CodeSec SOC Organization")
+THEHIVE_ORG = env.get("THEHIVE_ORG_NAME", "YOURORG")
+THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "Your SOC Organization")
 THEHIVE_ANALYST = env.get("THEHIVE_ANALYST_USER", "analyst@yourdomain.com")
 THEHIVE_ANALYST_PASS = env.get("THEHIVE_ANALYST_PASSWORD", "SocAnalyst@2025")
 
@@ -390,7 +390,7 @@ def step_cortex():
 
     # Create org
     r = session.post(f"{CURL}/api/organization", json={
-        "name": CORTEX_ORG, "description": "CodeSec SOC Organization", "status": "Active"
+        "name": CORTEX_ORG, "description": "Your SOC Organization", "status": "Active"
     })
     if r.status_code == 201:
         log(f"  -> Organization '{CORTEX_ORG}' created")
@@ -586,7 +586,7 @@ def step_misp_thehive(th_auth):
 
     if r.status_code == 200:
         connectors = r.json()
-        misp_exists = any(c.get("name") == "MISP-CODESEC" for c in connectors)
+        misp_exists = any(c.get("name") == f"MISP-{THEHIVE_ORG}" for c in connectors)
         if misp_exists:
             log("  -> MISP connector already configured in TheHive")
             return
@@ -596,7 +596,7 @@ def step_misp_thehive(th_auth):
     r = requests.post(f"{TH}/api/connector/misp", auth=th_auth,
                       headers={"Content-Type": "application/json"},
                       json={
-                          "name": "MISP-CODESEC",
+                          "name": f"MISP-{THEHIVE_ORG}",
                           "url": misp_url,
                           "auth": {"type": "key", "key": misp_key},
                           "wsConfig": {"ssl": {"loose.acceptAnyCertificate": True}},
@@ -1187,6 +1187,18 @@ def step_keycloak_sso():
         else:
             log(f"  X TheHive config not found at {thehive_conf}")
 
+    # -- Restart Cortex to pick up updated config (SSO URLs, client secret) --
+    # Cortex reads application.conf at startup and caches it in memory.
+    # Config replacement happens AFTER containers start, so Cortex must be restarted.
+    log("\n  Restarting Cortex to apply SSO config...")
+    try:
+        subprocess.run(["docker", "restart", "socstack-cortex"],
+                       capture_output=True, text=True, timeout=30)
+        log("  -> Cortex restarting (SSO config will take effect)")
+    except Exception as e:
+        log(f"  X Cortex restart failed: {e}")
+    time.sleep(10)
+
     # -- Generate OAUTH2_PROXY_COOKIE_SECRET (reuse existing if set) -----
     cookie_secret = env.get("OAUTH2_PROXY_COOKIE_SECRET", "")
     if cookie_secret:
@@ -1676,7 +1688,7 @@ def print_summary():
     log("")
     log("  1. TheHive -> Cortex Server")
     log("     Platform Management -> Cortex Servers -> Add")
-    log(f"     - Server Name:                    Cortex-CODESEC")
+    log(f"     - Server Name:                    Cortex-{THEHIVE_ORG}")
     log(f"     - URL:                            http://socstack-cortex:9001")
     log(f"     - API Key:                        {cortex_key}")
     log(f"     - Check Certificate Authority:    DISABLE")
@@ -1684,7 +1696,7 @@ def print_summary():
     log("")
     log("  2. TheHive -> MISP Server")
     log("     Platform Management -> MISP Servers -> Add")
-    log(f"     - Server Name:  MISP-CODESEC")
+    log(f"     - Server Name:  MISP-{THEHIVE_ORG}")
     log(f"     - URL:          https://socstack-misp-core:443")
     log(f"     - API Key:      {misp_key}")
     log(f"     - Skip SSL:     Yes")
@@ -1834,37 +1846,12 @@ if __name__ == "__main__":
     log(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log("="*60)
 
-    # Pre-step: Fix Keycloak data dir permissions (uid 1000 = keycloak user)
-    # Keycloak needs /opt/keycloak/data/tmp writable for gzip theme cache
-    kc_data = os.path.join(BASE_DIR, "data", "keycloak_data")
-    kc_tmp = os.path.join(kc_data, "tmp")
-    if os.path.isdir(kc_data):
-        os.makedirs(kc_tmp, exist_ok=True)
-        subprocess.run(["chown", "-R", "1000:0", kc_data],
-                       capture_output=True, timeout=10)
-        log("  -> Keycloak data dir permissions fixed (uid=1000)")
-
     # Pre-step: Stop Wazuh Dashboard before NPM/SSL is ready
     # Dashboard SSO connect_url needs public domain -> NPM must be configured first
     subprocess.run(["docker", "stop", "socstack-wazuh-dashboard"],
                    capture_output=True, timeout=30)
     log("  -> Wazuh Dashboard stopped (will restart after NPM + SSL + SSO configured)")
-
-    # Pre-step: Fix custom-n8n integration permissions inside Wazuh manager
-    # Bind-mounted files get host permissions, but need root:wazuh (gid 101) + mode 750
-    try:
-        result = subprocess.run(
-            ["docker", "exec", "socstack-wazuh-manager", "bash", "-c",
-             "chmod --reference=/var/ossec/integrations/slack /var/ossec/integrations/custom-n8n /var/ossec/integrations/custom-n8n.py 2>/dev/null && "
-             "chown --reference=/var/ossec/integrations/slack /var/ossec/integrations/custom-n8n /var/ossec/integrations/custom-n8n.py 2>/dev/null"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0:
-            log("  -> custom-n8n integration: permissions fixed (root:wazuh 750)")
-        else:
-            log("  -> custom-n8n integration: not found or permissions unchanged")
-    except Exception:
-        log("  -> custom-n8n integration: container not ready (will be fixed on restart)")
+    # Note: Directory creation, permissions, and custom-n8n ownership are handled by pre-deploy.sh
 
     step_npm()
     step_n8n()

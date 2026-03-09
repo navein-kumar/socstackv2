@@ -966,6 +966,18 @@ def step_keycloak_sso():
                 f.write(content)
             log(f"  -> thehive-application.conf updated (SSO secret + IP:PORT + org)")
 
+    # -- Restart Cortex to pick up updated config (SSO URLs, client secret) --
+    # Cortex reads application.conf at startup and caches it in memory.
+    # Config replacement happens AFTER containers start, so Cortex must be restarted.
+    log("\n  Restarting Cortex to apply SSO config...")
+    try:
+        subprocess.run(["docker", "restart", "socstack-cortex"],
+                       capture_output=True, text=True, timeout=30)
+        log("  -> Cortex restarting (SSO config will take effect)")
+    except Exception as e:
+        log(f"  X Cortex restart failed: {e}")
+    time.sleep(10)
+
     # Save SSO_CLIENT_SECRET + OAUTH2_PROXY_COOKIE_SECRET to .env (single read/write)
     env_path = os.path.join(BASE_DIR, ".env")
     if os.path.exists(env_path):

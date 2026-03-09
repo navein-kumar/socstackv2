@@ -19,8 +19,8 @@
     },
     {
       "parameters": {
-        "fromEmail": "siemalertmail@gmail.com",
-        "toEmail": "naveen@codesecure.in",
+        "fromEmail": "siem-alerts@yourdomain.com",
+        "toEmail": "soc-team@yourdomain.com",
         "subject": "Wazuh SIEM Alert ",
         "html": "={{ $json.html }}",
         "options": {

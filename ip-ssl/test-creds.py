@@ -103,14 +103,14 @@ try:
         kc_h = {"Authorization": f"Bearer {kc_token}"}
 
         # Check wazuh realm exists
-        r2 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'wazuh')}", headers=kc_h, timeout=10)
+        r2 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'SOC')}", headers=kc_h, timeout=10)
         if r2.status_code == 200:
             ok(f"Keycloak realm '{creds.get('KC_WAZUH_REALM')}' exists")
         else:
             fail(f"Keycloak realm '{creds.get('KC_WAZUH_REALM')}' not found")
 
         # Check OIDC client exists
-        r3 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'wazuh')}/clients?clientId={creds.get('KC_WAZUH_CLIENT_ID', 'wazuh-sso')}", headers=kc_h, timeout=10)
+        r3 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'SOC')}/clients?clientId={creds.get('KC_WAZUH_CLIENT_ID', 'soc-sso')}", headers=kc_h, timeout=10)
         if r3.status_code == 200 and r3.json():
             ok(f"Keycloak client '{creds.get('KC_WAZUH_CLIENT_ID')}' exists")
         else:
@@ -136,9 +136,9 @@ for email_key, pass_key, label in sso_users:
         warn(f"{label}: credentials not in .env.deployed")
         continue
     try:
-        r = requests.post(f"http://localhost:8081/realms/{creds.get('KC_WAZUH_REALM', 'wazuh')}/protocol/openid-connect/token", data={
+        r = requests.post(f"http://localhost:8081/realms/{creds.get('KC_WAZUH_REALM', 'SOC')}/protocol/openid-connect/token", data={
             "grant_type": "password",
-            "client_id": creds.get("KC_WAZUH_CLIENT_ID", "wazuh-sso"),
+            "client_id": creds.get("KC_WAZUH_CLIENT_ID", "soc-sso"),
             "client_secret": creds.get("KC_WAZUH_CLIENT_SECRET", "") or creds.get("SSO_CLIENT_SECRET", ""),
             "username": email,
             "password": passwd,
@@ -185,8 +185,8 @@ try:
     r = requests.get("https://localhost:5601/auth/openid/login", verify=False, timeout=10, allow_redirects=False)
     if r.status_code == 302:
         loc = r.headers.get("Location", "")
-        if "wazuh-sso" in loc and (SSO_PORT in loc or SERVER_IP in loc):
-            ok(f"SSO redirect → Keycloak at {SERVER_IP}:{SSO_PORT} (client_id=wazuh-sso)")
+        if "soc-sso" in loc and (SSO_PORT in loc or SERVER_IP in loc):
+            ok(f"SSO redirect → Keycloak at {SERVER_IP}:{SSO_PORT} (client_id=soc-sso)")
         else:
             fail(f"SSO redirect missing IP:PORT ({SERVER_IP}:{SSO_PORT}): {loc[:100]}")
     else:

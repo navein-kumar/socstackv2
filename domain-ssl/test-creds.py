@@ -54,18 +54,20 @@ def warn(msg):
     print(f"  {YELLOW}⚠{NC} {msg}")
 
 
-# ── Load .env.deployed ────────────────────────────────────
+# ── Load .env first, then .env.deployed overrides ──────────
 creds = {}
-if not os.path.exists(DEPLOYED_FILE):
-    print(f"{RED}ERROR:{NC} {DEPLOYED_FILE} not found. Run post-deploy.py first.")
-    sys.exit(1)
+for ef in [os.path.join(BASE_DIR, ".env"), DEPLOYED_FILE]:
+    if os.path.exists(ef):
+        with open(ef) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    creds[k.strip()] = v.strip()
 
-with open(DEPLOYED_FILE) as f:
-    for line in f:
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            creds[k.strip()] = v.strip()
+if not creds:
+    print(f"{RED}ERROR:{NC} No .env or .env.deployed found. Run post-deploy.py first.")
+    sys.exit(1)
 
 print("=" * 60)
 print("  SOC STACK - Credentials & Login Test")
@@ -111,14 +113,14 @@ try:
         kc_h = {"Authorization": f"Bearer {kc_token}"}
 
         # Check wazuh realm exists
-        r2 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'wazuh')}", headers=kc_h, timeout=10)
+        r2 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'SOC')}", headers=kc_h, timeout=10)
         if r2.status_code == 200:
             ok(f"Keycloak realm '{creds.get('KC_WAZUH_REALM')}' exists")
         else:
             fail(f"Keycloak realm '{creds.get('KC_WAZUH_REALM')}' not found")
 
         # Check OIDC client exists
-        r3 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'wazuh')}/clients?clientId={creds.get('KC_WAZUH_CLIENT_ID', 'wazuh-sso')}", headers=kc_h, timeout=10)
+        r3 = requests.get(f"http://localhost:8081/admin/realms/{creds.get('KC_WAZUH_REALM', 'SOC')}/clients?clientId={creds.get('KC_WAZUH_CLIENT_ID', 'soc-sso')}", headers=kc_h, timeout=10)
         if r3.status_code == 200 and r3.json():
             ok(f"Keycloak client '{creds.get('KC_WAZUH_CLIENT_ID')}' exists")
         else:
@@ -134,7 +136,8 @@ except Exception as e:
 print(f"\n{CYAN}── 3. Keycloak SSO Users ───────────────────────────{NC}")
 sso_users = [
     ("SSO_ADMIN_EMAIL", "SSO_ADMIN_PASSWORD", "SSO Admin"),
-    ("SSO_USER_EMAIL", "SSO_USER_PASSWORD", "SSO User"),
+    ("SSO_ANALYST_EMAIL", "SSO_ANALYST_PASSWORD", "SSO Analyst"),
+    ("SSO_READONLY_EMAIL", "SSO_READONLY_PASSWORD", "SSO Readonly"),
 ]
 for email_key, pass_key, label in sso_users:
     email = creds.get(email_key, "")
@@ -143,10 +146,10 @@ for email_key, pass_key, label in sso_users:
         warn(f"{label}: credentials not in .env.deployed")
         continue
     try:
-        r = requests.post(f"http://localhost:8081/realms/{creds.get('KC_WAZUH_REALM', 'wazuh')}/protocol/openid-connect/token", data={
+        r = requests.post(f"http://localhost:8081/realms/{creds.get('KC_WAZUH_REALM', 'SOC')}/protocol/openid-connect/token", data={
             "grant_type": "password",
-            "client_id": creds.get("KC_WAZUH_CLIENT_ID", "wazuh-sso"),
-            "client_secret": creds.get("KC_WAZUH_CLIENT_SECRET", ""),
+            "client_id": creds.get("KC_WAZUH_CLIENT_ID", "soc-sso"),
+            "client_secret": creds.get("SSO_CLIENT_SECRET", ""),
             "username": email,
             "password": passwd,
         }, timeout=10)
@@ -192,8 +195,10 @@ try:
     r = requests.get("https://localhost:5601/auth/openid/login", verify=False, timeout=10, allow_redirects=False)
     if r.status_code == 302:
         loc = r.headers.get("Location", "")
-        if "sso.codesec.in" in loc and "wazuh-sso" in loc:
-            ok(f"SSO redirect → Keycloak (client_id=wazuh-sso)")
+        sso_domain = creds.get("SSO_DOMAIN", "sso.yourdomain.com")
+        client_id = creds.get("KC_WAZUH_CLIENT_ID", "soc-sso")
+        if sso_domain in loc and client_id in loc:
+            ok(f"SSO redirect → Keycloak (client_id={client_id})")
         else:
             fail(f"SSO redirect wrong: {loc[:100]}")
     else:
@@ -348,26 +353,9 @@ if cortex_key:
         fail(f"Cortex API key test: {e}")
 
 # ════════════════════════════════════════════════════════════
-# 11. Grafana Login
+# 11. Wazuh n8n Integration Check
 # ════════════════════════════════════════════════════════════
-print(f"\n{CYAN}── 11. Grafana ─────────────────────────────────────{NC}")
-try:
-    r = requests.get("http://localhost:3000/api/org",
-                     auth=(creds.get("GF_ADMIN_USER", "admin"),
-                           creds.get("GF_ADMIN_PASSWORD", "")),
-                     timeout=10)
-    if r.status_code == 200:
-        org = r.json().get("name", "?")
-        ok(f"Grafana login: {creds.get('GF_ADMIN_USER')} (org: {org})")
-    else:
-        fail(f"Grafana login failed: {r.status_code}")
-except Exception as e:
-    fail(f"Grafana unreachable: {e}")
-
-# ════════════════════════════════════════════════════════════
-# 12. Wazuh n8n Integration Check
-# ════════════════════════════════════════════════════════════
-print(f"\n{CYAN}── 12. Wazuh n8n Integration ───────────────────────{NC}")
+print(f"\n{CYAN}── 11. Wazuh n8n Integration ───────────────────────{NC}")
 try:
     result = subprocess.run(
         ["docker", "exec", "socstack-wazuh-manager", "ls", "-la",
@@ -402,9 +390,9 @@ except Exception as e:
     fail(f"n8n config check: {e}")
 
 # ════════════════════════════════════════════════════════════
-# 13. Public Domain SSL Check
+# 12. Public Domain SSL Check
 # ════════════════════════════════════════════════════════════
-print(f"\n{CYAN}── 13. Public Domain SSL ───────────────────────────{NC}")
+print(f"\n{CYAN}── 12. Public Domain SSL ───────────────────────────{NC}")
 domains = {
     "SSO": creds.get("SSO_URL", ""),
     "Wazuh": creds.get("WAZUH_URL", ""),
@@ -412,7 +400,6 @@ domains = {
     "MISP": creds.get("CTI_URL", ""),
     "TheHive": creds.get("HIVE_URL", ""),
     "Cortex": creds.get("CORTEX_URL", ""),
-    "Grafana": creds.get("GRAFANA_URL", ""),
     "NPM": creds.get("NPM_URL", ""),
 }
 for name, url in domains.items():

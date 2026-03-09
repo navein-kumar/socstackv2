@@ -333,8 +333,11 @@ N8N_INTEGRATION_DIR="$DEPLOY_DIR/configs/wazuh/wazuh_cluster"
 if [ -f "$N8N_INTEGRATION_DIR/custom-n8n" ] && [ -f "$N8N_INTEGRATION_DIR/custom-n8n.py" ]; then
     sed -i 's/\r$//' "$N8N_INTEGRATION_DIR/custom-n8n" "$N8N_INTEGRATION_DIR/custom-n8n.py"
     ok "custom-n8n: CRLF → LF line endings fixed"
+    # Wazuh manager runs custom integrations as root:wazuh (gid 101) with mode 750
+    # Set this on the host so bind-mounted files have correct ownership from first boot
+    chown 0:101 "$N8N_INTEGRATION_DIR/custom-n8n" "$N8N_INTEGRATION_DIR/custom-n8n.py"
     chmod 750 "$N8N_INTEGRATION_DIR/custom-n8n" "$N8N_INTEGRATION_DIR/custom-n8n.py"
-    ok "custom-n8n integration scripts: mode 750"
+    ok "custom-n8n integration: root:wazuh(101) mode 750"
 else
     warn "custom-n8n integration scripts not found in $N8N_INTEGRATION_DIR"
 fi

@@ -3,6 +3,12 @@
 # All services on single shared network: socstack_net
 # Unique container names prefixed with socstack-*
 # All credentials come from .env — never hardcoded here
+#
+# IMAGE PINNING: All images are pinned to exact versions tested
+# on 2026-03-09. Do NOT change to :latest — upstream updates
+# can break SSO hooks, config formats, and API compatibility.
+# To upgrade: test the new version locally first, then update
+# the tag here. See IMAGE-VERSIONS.md for the full version map.
 # ==============================================================
 
 # Variables are loaded automatically from .env in the same directory.
@@ -14,7 +20,7 @@ services:
   # NGINX PROXY MANAGER - Central Reverse Proxy
   # ============================================================
   socstack-nginx:
-    image: jc21/nginx-proxy-manager:latest
+    image: jc21/nginx-proxy-manager:2.14.0
     container_name: socstack-nginx
     restart: unless-stopped
     ports:
@@ -58,7 +64,7 @@ services:
       retries: 5
 
   socstack-keycloak:
-    image: quay.io/keycloak/keycloak:latest
+    image: quay.io/keycloak/keycloak:26.5.3
     container_name: socstack-keycloak
     command: start
     restart: unless-stopped
@@ -263,7 +269,7 @@ services:
       start_period: 60s
 
   socstack-minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: socstack-minio
     restart: unless-stopped
     command: server /data --console-address ":9090"
@@ -403,7 +409,8 @@ services:
       start_period: 30s
 
   socstack-misp-core:
-    image: ghcr.io/misp/misp-docker/misp-core:latest
+    # MISP has no version tags — pinned by digest (MISP 2.5.32, built 2026-02-11)
+    image: ghcr.io/misp/misp-docker/misp-core@sha256:3c1074796a44f07f5c7044880872bc8507f3f8d06941fde4f3878e0da4cef828
     container_name: socstack-misp-core
     restart: always
     depends_on:
@@ -467,7 +474,8 @@ services:
       - socstack_net
 
   socstack-misp-modules:
-    image: ghcr.io/misp/misp-docker/misp-modules:latest
+    # MISP modules — pinned by digest (misp-modules 3.0.5)
+    image: ghcr.io/misp/misp-docker/misp-modules@sha256:40b16ec4773c7911ad78323b3a5b7006fc55d12c50ce755630aee81dbabf57da
     container_name: socstack-misp-modules
     restart: always
     depends_on:
@@ -495,7 +503,7 @@ services:
       - socstack_net
 
   socstack-n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n:2.7.5
     container_name: socstack-n8n
     restart: unless-stopped
     dns:
@@ -515,6 +523,7 @@ services:
       - N8N_CUSTOM_EXTENSIONS=/home/node/.n8n/custom
       - EXTERNAL_HOOK_FILES=/home/node/.n8n/custom/hooks.js
       - N8N_FORWARD_AUTH_HEADER=X-Forwarded-Email
+      - N8N_OWNER_EMAIL=${N8N_ADMIN_EMAIL}
       # Full logout chain: oauth2-proxy sign_out → Keycloak logout → back to n8n
       - SSO_LOGOUT_URL=https://${N8N_DOMAIN}/oauth2/sign_out?rd=https%3A%2F%2F${SSO_DOMAIN}%2Frealms%2F${KC_WAZUH_REALM:-SOC}%2Fprotocol%2Fopenid-connect%2Flogout%3Fpost_logout_redirect_uri%3Dhttps%3A%2F%2F${N8N_DOMAIN}%2F
       - N8N_TRUST_PROXY=true
@@ -530,7 +539,7 @@ services:
   # GRAFANA - Monitoring & Visualization
   # ============================================================
   socstack-grafana:
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:12.3.3
     container_name: socstack-grafana
     restart: unless-stopped
     ports:
@@ -553,7 +562,7 @@ services:
       - socstack_net
 
   socstack-grafana-renderer:
-    image: grafana/grafana-image-renderer:latest
+    image: grafana/grafana-image-renderer:3.12.1
     container_name: socstack-grafana-renderer
     restart: unless-stopped
     environment:

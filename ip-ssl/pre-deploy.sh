@@ -527,32 +527,33 @@ fi
 # Create Cortex Java truststore with self-signed CA
 # Cortex JVM needs to trust the self-signed CA to call Keycloak's HTTPS
 # token/userinfo endpoints during SSO OAuth2 code exchange.
-# We create a copy of the default Java cacerts and import our CA into it.
+# MUST be created BEFORE docker-compose up — Cortex volume mount expects a FILE,
+# not a directory. Docker auto-creates missing mount sources as directories.
 CORTEX_CACERTS="$DEPLOY_DIR/configs/thehive/cortex-cacerts"
 if [ -f "$CERT_DIR/ca.crt" ]; then
-    # Find default Java cacerts (from the Cortex Docker image, Amazon Corretto 11)
-    DEFAULT_CACERTS="/usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts"
-    if command -v keytool &>/dev/null; then
-        # If keytool is available locally, create the truststore
-        if [ -f "$CORTEX_CACERTS" ]; then
-            # Check if our CA is already imported
-            if keytool -list -keystore "$CORTEX_CACERTS" -storepass changeit -alias socstack-ca &>/dev/null 2>&1; then
-                ok "Cortex truststore already contains self-signed CA"
-            else
-                keytool -importcert -trustcacerts -alias socstack-ca \
-                    -file "$CERT_DIR/ca.crt" -keystore "$CORTEX_CACERTS" \
-                    -storepass changeit -noprompt &>/dev/null
-                ok "Cortex truststore updated with self-signed CA"
-            fi
-        else
-            info "Cortex truststore will be created on first deploy (needs Java cacerts from container)"
-            info "Run: docker cp socstack-cortex:${DEFAULT_CACERTS} ${CORTEX_CACERTS}"
-            info "Then: keytool -importcert -trustcacerts -alias socstack-ca -file ${CERT_DIR}/ca.crt -keystore ${CORTEX_CACERTS} -storepass changeit -noprompt"
-        fi
+    if [ -f "$CORTEX_CACERTS" ]; then
+        ok "Cortex truststore already exists"
     else
-        info "keytool not found locally — Cortex truststore must be created after first deploy"
-        info "Run: docker cp socstack-cortex:${DEFAULT_CACERTS} ${CORTEX_CACERTS}"
-        info "Then: keytool -importcert -trustcacerts -alias socstack-ca -file ${CERT_DIR}/ca.crt -keystore ${CORTEX_CACERTS} -storepass changeit -noprompt"
+        info "Creating Cortex truststore from Docker image (one-time)..."
+        # Use a temporary Cortex container to extract default Java cacerts + import our CA.
+        # This avoids needing keytool on the host — uses the container's own JDK tools.
+        # --entrypoint sh: override Cortex's entrypoint so sh -c runs properly
+        docker run --rm --entrypoint sh \
+            -v "$(dirname "$CORTEX_CACERTS"):/out" \
+            -v "$CERT_DIR/ca.crt:/tmp/ca.crt:ro" \
+            thehiveproject/cortex:3.1.8-1 \
+            -c "cp /usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts /out/cortex-cacerts && \
+                keytool -importcert -trustcacerts -alias socstack-ca \
+                -file /tmp/ca.crt -keystore /out/cortex-cacerts \
+                -storepass changeit -noprompt" 2>&1 | tail -3
+        if [ -f "$CORTEX_CACERTS" ]; then
+            ok "Cortex truststore created with self-signed CA (from container keytool)"
+        else
+            fail "Cortex truststore creation failed — Cortex SSO will not work"
+            info "Manual fix: docker-compose up -d, then:"
+            info "  docker cp socstack-cortex:/usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts ${CORTEX_CACERTS}"
+            info "  keytool -importcert -trustcacerts -alias socstack-ca -file ${CERT_DIR}/ca.crt -keystore ${CORTEX_CACERTS} -storepass changeit -noprompt"
+        fi
     fi
 else
     warn "Self-signed CA not found — Cortex SSO will fail (cannot trust Keycloak HTTPS)"

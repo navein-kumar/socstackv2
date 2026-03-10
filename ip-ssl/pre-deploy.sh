@@ -524,6 +524,40 @@ if [ -d "$WAZUH_CERT_DIR" ]; then
     ok "Wazuh SSL cert permissions: 444 (world-readable)"
 fi
 
+# Create Cortex Java truststore with self-signed CA
+# Cortex JVM needs to trust the self-signed CA to call Keycloak's HTTPS
+# token/userinfo endpoints during SSO OAuth2 code exchange.
+# We create a copy of the default Java cacerts and import our CA into it.
+CORTEX_CACERTS="$DEPLOY_DIR/configs/thehive/cortex-cacerts"
+if [ -f "$CERT_DIR/ca.crt" ]; then
+    # Find default Java cacerts (from the Cortex Docker image, Amazon Corretto 11)
+    DEFAULT_CACERTS="/usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts"
+    if command -v keytool &>/dev/null; then
+        # If keytool is available locally, create the truststore
+        if [ -f "$CORTEX_CACERTS" ]; then
+            # Check if our CA is already imported
+            if keytool -list -keystore "$CORTEX_CACERTS" -storepass changeit -alias socstack-ca &>/dev/null 2>&1; then
+                ok "Cortex truststore already contains self-signed CA"
+            else
+                keytool -importcert -trustcacerts -alias socstack-ca \
+                    -file "$CERT_DIR/ca.crt" -keystore "$CORTEX_CACERTS" \
+                    -storepass changeit -noprompt &>/dev/null
+                ok "Cortex truststore updated with self-signed CA"
+            fi
+        else
+            info "Cortex truststore will be created on first deploy (needs Java cacerts from container)"
+            info "Run: docker cp socstack-cortex:${DEFAULT_CACERTS} ${CORTEX_CACERTS}"
+            info "Then: keytool -importcert -trustcacerts -alias socstack-ca -file ${CERT_DIR}/ca.crt -keystore ${CORTEX_CACERTS} -storepass changeit -noprompt"
+        fi
+    else
+        info "keytool not found locally — Cortex truststore must be created after first deploy"
+        info "Run: docker cp socstack-cortex:${DEFAULT_CACERTS} ${CORTEX_CACERTS}"
+        info "Then: keytool -importcert -trustcacerts -alias socstack-ca -file ${CERT_DIR}/ca.crt -keystore ${CORTEX_CACERTS} -storepass changeit -noprompt"
+    fi
+else
+    warn "Self-signed CA not found — Cortex SSO will fail (cannot trust Keycloak HTTPS)"
+fi
+
 # ── Summary ───────────────────────────────────────────────
 echo ""
 echo "============================================================"

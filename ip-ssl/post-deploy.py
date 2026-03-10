@@ -12,7 +12,8 @@ Steps:
   3. TheHive: Change default password, create org + analyst user
   4. MISP <-> TheHive Integration
   4b. MISP Feeds: Enable all feeds, cache/download all, daily cron update
-  5. Keycloak SSO: Create SOC realm, soc-sso client, groups, users
+  5a. SSO Config Files: Replace placeholders in config files (from .env, no Keycloak needed)
+  5b. Keycloak SSO: Create SOC realm, soc-sso client, groups, users
   6. Apply Wazuh security configs (securityadmin)
   7. Wazuh API: SSO role mapping via run_as
   8. Save all deployed credentials to .env.deployed
@@ -662,7 +663,136 @@ def step_misp_feeds():
 
 
 # ====================================================================
-# STEP 5: Keycloak SSO -> SOC Realm + Client + Groups + Users
+# STEP 5a: Replace SSO placeholders in config files (no Keycloak needed)
+# ====================================================================
+# This runs independently of Keycloak API calls. Even if Keycloak is down,
+# config files get updated from .env values so services start with correct
+# SSO URLs. Previously this was inside step_keycloak_sso() behind Keycloak
+# API calls — if Keycloak wasn't ready, all config replacements were skipped.
+def step_sso_config_files():
+    log("\n" + "="*60)
+    log("STEP 5a: SSO Config Files -> Replace placeholders from .env")
+    log("="*60)
+
+    client_secret = env.get("SSO_CLIENT_SECRET", "")
+    if not client_secret:
+        log("  ! SSO_CLIENT_SECRET not set in .env — config files NOT updated")
+        log("    Run pre-deploy.sh first to generate it, then re-run post-deploy.py")
+        return
+
+    sso_base   = f"https://{SERVER_IP}:{SSO_PORT}"
+    wazuh_base = f"https://{SERVER_IP}:{WAZUH_PORT}"
+    oidc_url   = f"{sso_base}/realms/{SSO_REALM}/.well-known/openid-configuration"
+    logout_url = f"{sso_base}/realms/{SSO_REALM}/protocol/openid-connect/logout"
+
+    # 1. opensearch_dashboards.yml
+    dash_yml = os.path.join(BASE_DIR, "configs/wazuh/wazuh_dashboard/opensearch_dashboards.yml")
+    if os.path.exists(dash_yml):
+        with open(dash_yml) as f:
+            content = f.read()
+        if "WILL_BE_SET_BY_POST_DEPLOY" in content:
+            content = content.replace("WILL_BE_SET_BY_POST_DEPLOY", client_secret)
+        content = re.sub(
+            r'(opensearch_security\.openid\.connect_url:\s*)(".*?"|[^\s]+)',
+            f'\\1"{oidc_url}"', content
+        )
+        content = re.sub(
+            r'(opensearch_security\.openid\.base_redirect_url:\s*)(".*?"|[^\s]+)',
+            f'\\1"{wazuh_base}"', content
+        )
+        content = re.sub(
+            r'(opensearch_security\.openid\.logout_url:\s*)(".*?"|[^\s]+)',
+            f'\\1"{logout_url}"', content
+        )
+        with open(dash_yml, "w") as f:
+            f.write(content)
+        log(f"  -> opensearch_dashboards.yml updated (secret + OIDC URLs → IP:PORT)")
+
+    # 2. config.yml (Wazuh Indexer OpenID)
+    cfg_yml = os.path.join(BASE_DIR, "configs/wazuh/wazuh_indexer/config.yml")
+    if os.path.exists(cfg_yml):
+        with open(cfg_yml) as f:
+            content = f.read()
+        content = re.sub(
+            r'(openid_connect_url:\s*)"[^"]+"',
+            f'\\1"{oidc_url}"', content
+        )
+        with open(cfg_yml, "w") as f:
+            f.write(content)
+        log(f"  -> config.yml updated (OIDC URL → IP:PORT)")
+
+    # 3. cortex-application.conf (Cortex OAuth2 SSO)
+    cortex_conf = os.path.join(BASE_DIR, "configs/thehive/cortex-application.conf")
+    if os.path.exists(cortex_conf):
+        with open(cortex_conf) as f:
+            content = f.read()
+        content = content.replace("WILL_BE_SET_BY_POST_DEPLOY", client_secret)
+        content = content.replace("YOUR_SERVER_IP", SERVER_IP)
+        content = content.replace("YOUR_SSO_PORT", SSO_PORT)
+        content = content.replace("YOUR_CORTEX_PORT", CORTEX_PORT)
+        content = content.replace("YOUR_SSO_REALM", SSO_REALM)
+        content = content.replace("YOUR_SSO_CLIENT_ID", SSO_CLIENT_ID)
+        content = content.replace("YOUR_CORTEX_ORG_NAME", CORTEX_ORG)
+        content = content.replace("YOUR_CORTEX_SECRET", env.get("CORTEX_SECRET", "CortexSecretKey"))
+        with open(cortex_conf, "w") as f:
+            f.write(content)
+        log(f"  -> cortex-application.conf updated (SSO secret + IP:PORT + org)")
+
+    # 4. thehive-application.conf (TheHive OAuth2 SSO)
+    thehive_conf = os.path.join(BASE_DIR, "configs/thehive/thehive-application.conf")
+    if os.path.exists(thehive_conf):
+        with open(thehive_conf) as f:
+            content = f.read()
+        content = content.replace("WILL_BE_SET_BY_POST_DEPLOY", client_secret)
+        content = content.replace("YOUR_SERVER_IP", SERVER_IP)
+        content = content.replace("YOUR_SSO_PORT", SSO_PORT)
+        content = content.replace("YOUR_THEHIVE_PORT", THEHIVE_PORT)
+        content = content.replace("YOUR_SSO_REALM", SSO_REALM)
+        content = content.replace("YOUR_SSO_CLIENT_ID", SSO_CLIENT_ID)
+        content = content.replace("YOUR_THEHIVE_ORG_NAME", THEHIVE_ORG)
+        with open(thehive_conf, "w") as f:
+            f.write(content)
+        log(f"  -> thehive-application.conf updated (SSO secret + IP:PORT + org)")
+
+    # 5. Create Cortex Java truststore with self-signed CA
+    cortex_cacerts = os.path.join(BASE_DIR, "configs", "thehive", "cortex-cacerts")
+    ca_cert = os.path.join(BASE_DIR, "certs", "ca.crt")
+    jdk_cacerts = "/usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts"
+
+    if os.path.exists(ca_cert) and not os.path.exists(cortex_cacerts):
+        log("\n  Creating Cortex truststore with self-signed CA...")
+        try:
+            r = subprocess.run(
+                ["docker", "cp", f"socstack-cortex:{jdk_cacerts}", cortex_cacerts],
+                capture_output=True, text=True, timeout=15
+            )
+            if r.returncode == 0:
+                keytool_cmd = subprocess.run(
+                    ["keytool", "-importcert", "-trustcacerts",
+                     "-alias", "socstack-ca",
+                     "-file", ca_cert,
+                     "-keystore", cortex_cacerts,
+                     "-storepass", "changeit", "-noprompt"],
+                    capture_output=True, text=True, timeout=15
+                )
+                if keytool_cmd.returncode == 0:
+                    log("  -> Cortex truststore created with self-signed CA")
+                elif "already exists" in keytool_cmd.stderr:
+                    log("  -> Cortex truststore already contains self-signed CA")
+                else:
+                    log(f"  ! keytool import failed: {keytool_cmd.stderr[:200]}")
+            else:
+                log(f"  ! Could not copy cacerts from Cortex container: {r.stderr[:200]}")
+        except Exception as e:
+            log(f"  ! Cortex truststore creation failed: {e}")
+    elif os.path.exists(cortex_cacerts):
+        log("\n  Cortex truststore already exists (skipping)")
+
+    log("  DONE — config files updated from .env (no Keycloak API needed)")
+
+
+# ====================================================================
+# STEP 5b: Keycloak SSO -> SOC Realm + Client + Groups + Users
 # ====================================================================
 def step_keycloak_sso():
     log("\n" + "="*60)
@@ -887,96 +1017,9 @@ def step_keycloak_sso():
     deployed["SSO_REALM"]           = SSO_REALM
     deployed["SSO_CLIENT_ID"]       = SSO_CLIENT_ID
 
-    # Inject client_secret into config files
-    if client_secret:
-        sso_base     = f"https://{SERVER_IP}:{SSO_PORT}"
-        wazuh_base   = f"https://{SERVER_IP}:{WAZUH_PORT}"
-        oidc_url     = f"{sso_base}/realms/{SSO_REALM}/.well-known/openid-configuration"
-        logout_url   = f"{sso_base}/realms/{SSO_REALM}/protocol/openid-connect/logout"
-
-        # 1. opensearch_dashboards.yml
-        dash_yml = os.path.join(BASE_DIR, "configs/wazuh/wazuh_dashboard/opensearch_dashboards.yml")
-        if os.path.exists(dash_yml):
-            with open(dash_yml) as f:
-                content = f.read()
-            changed = False
-            if "WILL_BE_SET_BY_POST_DEPLOY" in content:
-                content = content.replace("WILL_BE_SET_BY_POST_DEPLOY", client_secret)
-                changed = True
-            # Update OIDC URLs to IP:PORT
-            content = re.sub(
-                r'(opensearch_security\.openid\.connect_url:\s*)(".*?"|[^\s]+)',
-                f'\\1"{oidc_url}"', content
-            )
-            content = re.sub(
-                r'(opensearch_security\.openid\.base_redirect_url:\s*)(".*?"|[^\s]+)',
-                f'\\1"{wazuh_base}"', content
-            )
-            content = re.sub(
-                r'(opensearch_security\.openid\.logout_url:\s*)(".*?"|[^\s]+)',
-                f'\\1"{logout_url}"', content
-            )
-            changed = True
-            with open(dash_yml, "w") as f:
-                f.write(content)
-            log(f"  -> opensearch_dashboards.yml updated (secret + OIDC URLs → IP:PORT)")
-
-        # 2. config.yml (Wazuh Indexer OpenID)
-        cfg_yml = os.path.join(BASE_DIR, "configs/wazuh/wazuh_indexer/config.yml")
-        if os.path.exists(cfg_yml):
-            with open(cfg_yml) as f:
-                content = f.read()
-            content = re.sub(
-                r'(openid_connect_url:\s*)"[^"]+"',
-                f'\\1"{oidc_url}"', content
-            )
-            with open(cfg_yml, "w") as f:
-                f.write(content)
-            log(f"  -> config.yml updated (OIDC URL → IP:PORT)")
-
-        # 3. cortex-application.conf (Cortex OAuth2 SSO)
-        cortex_conf = os.path.join(BASE_DIR, "configs/thehive/cortex-application.conf")
-        if os.path.exists(cortex_conf):
-            with open(cortex_conf) as f:
-                content = f.read()
-            content = content.replace("WILL_BE_SET_BY_POST_DEPLOY", client_secret)
-            content = content.replace("YOUR_SERVER_IP", SERVER_IP)
-            content = content.replace("YOUR_SSO_PORT", SSO_PORT)
-            content = content.replace("YOUR_CORTEX_PORT", CORTEX_PORT)
-            content = content.replace("YOUR_SSO_REALM", SSO_REALM)
-            content = content.replace("YOUR_SSO_CLIENT_ID", SSO_CLIENT_ID)
-            content = content.replace("YOUR_CORTEX_ORG_NAME", CORTEX_ORG)
-            with open(cortex_conf, "w") as f:
-                f.write(content)
-            log(f"  -> cortex-application.conf updated (SSO secret + IP:PORT + org)")
-
-        # 4. thehive-application.conf (TheHive OAuth2 SSO - reference config)
-        thehive_conf = os.path.join(BASE_DIR, "configs/thehive/thehive-application.conf")
-        if os.path.exists(thehive_conf):
-            with open(thehive_conf) as f:
-                content = f.read()
-            content = content.replace("WILL_BE_SET_BY_POST_DEPLOY", client_secret)
-            content = content.replace("YOUR_SERVER_IP", SERVER_IP)
-            content = content.replace("YOUR_SSO_PORT", SSO_PORT)
-            content = content.replace("YOUR_THEHIVE_PORT", THEHIVE_PORT)
-            content = content.replace("YOUR_SSO_REALM", SSO_REALM)
-            content = content.replace("YOUR_SSO_CLIENT_ID", SSO_CLIENT_ID)
-            content = content.replace("YOUR_THEHIVE_ORG_NAME", THEHIVE_ORG)
-            with open(thehive_conf, "w") as f:
-                f.write(content)
-            log(f"  -> thehive-application.conf updated (SSO secret + IP:PORT + org)")
-
-    # -- Restart Cortex to pick up updated config (SSO URLs, client secret) --
-    # Cortex reads application.conf at startup and caches it in memory.
-    # Config replacement happens AFTER containers start, so Cortex must be restarted.
-    log("\n  Restarting Cortex to apply SSO config...")
-    try:
-        subprocess.run(["docker", "restart", "socstack-cortex"],
-                       capture_output=True, text=True, timeout=30)
-        log("  -> Cortex restarting (SSO config will take effect)")
-    except Exception as e:
-        log(f"  X Cortex restart failed: {e}")
-    time.sleep(10)
+    # NOTE: Config file replacement + Cortex truststore creation moved to
+    # step_sso_config_files() which runs independently from main().
+    # This ensures configs are updated even if Keycloak API calls above fail.
 
     # Save SSO_CLIENT_SECRET + OAUTH2_PROXY_COOKIE_SECRET to .env (single read/write)
     env_path = os.path.join(BASE_DIR, ".env")
@@ -1009,54 +1052,8 @@ def step_keycloak_sso():
         with open(env_path, "w") as f:
             f.write(env_content)
 
-    # Restart Cortex + TheHive so they reload their updated application.conf files
-    log("  Restarting Cortex and TheHive to reload SSO application.conf...")
-    for svc in ["socstack-cortex", "socstack-thehive"]:
-        try:
-            r = subprocess.run(
-                ["docker", "compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
-                 "up", "-d", "--no-deps", svc],
-                capture_output=True, text=True, timeout=120, cwd=BASE_DIR
-            )
-            if r.returncode == 0:
-                log(f"  -> {svc} restarted OK")
-            else:
-                r2 = subprocess.run(
-                    ["docker-compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
-                     "up", "-d", "--no-deps", svc],
-                    capture_output=True, text=True, timeout=120, cwd=BASE_DIR
-                )
-                if r2.returncode == 0:
-                    log(f"  -> {svc} restarted OK (via docker-compose)")
-                else:
-                    log(f"  ! {svc} restart failed: {r.stderr[:200]}")
-        except Exception as e:
-            log(f"  X {svc} restart error: {e}")
-
-    # Restart oauth2-proxy containers so they pick up the new SSO_CLIENT_SECRET and cookie secret
-    log("  Restarting oauth2-proxy containers with updated SSO credentials...")
-    for svc in ["socstack-oauth2-proxy-hive", "socstack-oauth2-proxy-n8n"]:
-        try:
-            r = subprocess.run(
-                ["docker", "compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
-                 "up", "-d", "--no-deps", svc],
-                capture_output=True, text=True, timeout=60, cwd=BASE_DIR
-            )
-            if r.returncode == 0:
-                log(f"  -> {svc} restarted OK")
-            else:
-                # Fallback: try docker-compose (older CLI)
-                r2 = subprocess.run(
-                    ["docker-compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
-                     "up", "-d", "--no-deps", svc],
-                    capture_output=True, text=True, timeout=60, cwd=BASE_DIR
-                )
-                if r2.returncode == 0:
-                    log(f"  -> {svc} restarted OK (via docker-compose)")
-                else:
-                    log(f"  ! {svc} restart failed: {r.stderr[:200]}")
-        except Exception as e:
-            log(f"  X {svc} restart error: {e}")
+    # NOTE: Cortex/TheHive/oauth2-proxy restarts are now done from main()
+    # after both step_sso_config_files() and step_keycloak_sso() complete.
 
     return client_secret
 
@@ -1501,7 +1498,42 @@ if __name__ == "__main__":
     th_auth    = step_thehive()
     step_misp_thehive(th_auth)
     step_misp_feeds()
-    client_secret = step_keycloak_sso()
+    step_sso_config_files()          # 5a: Replace SSO placeholders (no Keycloak needed)
+    client_secret = step_keycloak_sso()  # 5b: Keycloak realm/client/users (needs Keycloak API)
+
+    # Restart Cortex + TheHive to reload updated SSO configs
+    log("\n  Restarting Cortex + TheHive to reload SSO application.conf...")
+    for svc in ["socstack-cortex", "socstack-thehive"]:
+        try:
+            r = subprocess.run(
+                ["docker-compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
+                 "up", "-d", "--no-deps", svc],
+                capture_output=True, text=True, timeout=120, cwd=BASE_DIR
+            )
+            if r.returncode == 0:
+                log(f"  -> {svc} restarted OK")
+            else:
+                log(f"  ! {svc} restart failed: {r.stderr[:200]}")
+        except Exception as e:
+            log(f"  X {svc} restart error: {e}")
+
+    # Restart hive-bridge after TheHive — it caches DNS and gets EAI_AGAIN errors
+    # if TheHive container was recreated (new container IP).
+    log("  Restarting hive-bridge (refresh DNS after TheHive recreate)...")
+    time.sleep(5)
+    try:
+        r = subprocess.run(
+            ["docker-compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
+             "restart", "socstack-hive-bridge"],
+            capture_output=True, text=True, timeout=30, cwd=BASE_DIR
+        )
+        if r.returncode == 0:
+            log("  -> hive-bridge restarted OK")
+        else:
+            log(f"  ! hive-bridge restart failed: {r.stderr[:200]}")
+    except Exception as e:
+        log(f"  X hive-bridge restart error: {e}")
+
     step_wazuh_security()
     step_wazuh_api_role_mapping()
     save_deployed()

@@ -326,6 +326,11 @@ services:
       - "9000:9000"
     environment:
       - JVM_OPTS=-Xms1024M -Xmx1024M
+      # IP-SSL: Increase Akka HTTP max header size via JAVA_TOOL_OPTIONS.
+      # JVM reads this env var directly — always applies regardless of entrypoint.
+      # In IP-SSL mode, all services share one IP → accumulated cookies can
+      # exceed Akka's default 8192 per-header-value limit.
+      - JAVA_TOOL_OPTIONS=-Dakka.http.server.parsing.max-header-value-length=262144 -Dakka.http.server.parsing.max-header-count=256
     command:
       - --secret
       - ${THEHIVE_SECRET}
@@ -376,10 +381,16 @@ services:
       - /tmp/cortex-jobs
       - --docker-job-directory
       - /tmp/cortex-jobs
+    environment:
+      # Trust the self-signed CA for Keycloak HTTPS (SSO token exchange)
+      # JAVA_OPTS adds the CA truststore; cacerts volume mount overwrites JDK default
+      - JAVA_OPTS=-Djavax.net.ssl.trustStore=/opt/cortex/truststore/cacerts -Djavax.net.ssl.trustStorePassword=changeit
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/cortex-jobs:/tmp/cortex-jobs
       - ./configs/thehive/cortex-application.conf:/etc/cortex/application.conf
+      - ./configs/thehive/cortex-cacerts:/opt/cortex/truststore/cacerts:ro
+      - ./configs/thehive/cortex-cacerts:/usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts:ro
       - ./data/thehive/cortex_logs:/var/log/cortex
     networks:
       - socstack_net
@@ -455,6 +466,9 @@ services:
       - ./data/misp/ssl:/etc/nginx/certs/
       - ./data/misp/gnupg:/var/www/MISP/.gnupg/
       - ./certs/ca.crt:/usr/local/share/ca-certificates/socstack-ca.crt:ro
+      # Fix "Request Header Or Cookie Too Large" — IP-SSL mode shares one IP
+      # so browser sends ALL service cookies to MISP. Default 8KB is too small.
+      - ./configs/misp-large-headers.conf:/etc/nginx/conf.d/large-headers.conf:ro
     entrypoint: ["/bin/sh", "-c", "update-ca-certificates && exec /entrypoint.sh"]
     environment:
       - BASE_URL=https://${SERVER_IP}:${MISP_PORT:-8446}
@@ -616,9 +630,14 @@ services:
       - --upstream=http://socstack-hive-bridge:4181
       - --reverse-proxy=true
       - --set-xauthrequest=true
-      - --pass-access-token=true
-      - --pass-authorization-header=true
-      - --set-authorization-header=true
+      # DO NOT pass access token or authorization headers to upstream.
+      # In IP-SSL mode, all services share one IP so the browser sends ALL
+      # cookies to every port. Combined with large Keycloak JWT tokens in
+      # these headers, total request size exceeds Node.js 16KB header limit.
+      # hive-bridge only needs X-Forwarded-Email (set by --set-xauthrequest).
+      - --pass-access-token=false
+      - --pass-authorization-header=false
+      - --set-authorization-header=false
       - --insecure-oidc-skip-issuer-verification=true
       - --insecure-oidc-allow-unverified-email=true
       - --ssl-insecure-skip-verify=true
@@ -666,9 +685,12 @@ services:
       # Logout: allow redirect to Keycloak logout endpoint (same server, different port)
       - --whitelist-domain=${SERVER_IP}
       - --set-xauthrequest=true
-      - --pass-access-token=true
-      - --pass-authorization-header=true
-      - --set-authorization-header=true
+      # DO NOT pass access token or authorization headers to upstream.
+      # Same reason as TheHive proxy — IP-SSL cookie accumulation + large JWTs
+      # exceeds upstream header limits. n8n hooks.js only needs X-Forwarded-Email.
+      - --pass-access-token=false
+      - --pass-authorization-header=false
+      - --set-authorization-header=false
       - --insecure-oidc-skip-issuer-verification=true
       - --insecure-oidc-allow-unverified-email=true
       - --ssl-insecure-skip-verify=true

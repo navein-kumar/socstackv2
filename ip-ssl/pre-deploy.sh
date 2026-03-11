@@ -112,7 +112,9 @@ else
 fi
 
 if [ -z "${OAUTH2_PROXY_COOKIE_SECRET:-}" ] || [ "$OAUTH2_PROXY_COOKIE_SECRET" = "CHANGE_ME" ]; then
-    OAUTH2_PROXY_COOKIE_SECRET=$(openssl rand -base64 32)
+    # Must be exactly 16, 24, or 32 bytes for AES cipher (oauth2-proxy v7.x)
+    # openssl rand -hex 16 = 32 hex chars = 32 bytes as raw string
+    OAUTH2_PROXY_COOKIE_SECRET=$(openssl rand -hex 16)
     if grep -q '^OAUTH2_PROXY_COOKIE_SECRET=' "$ENV_FILE" 2>/dev/null; then
         sed -i "s|^OAUTH2_PROXY_COOKIE_SECRET=.*|OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET}|" "$ENV_FILE"
     else
@@ -387,7 +389,7 @@ if [ "$CERTS_OK" = false ]; then
     rm -f "$CERT_DIR/ca.key" "$CERT_DIR/ca.crt" "$CERT_DIR/server.key" "$CERT_DIR/server.crt" "$CERT_DIR/server.csr" "$CERT_DIR/ca.srl"
 
     # Step 1: Generate CA private key + self-signed CA certificate (10 years)
-    if ! openssl genrsa -out "$CERT_DIR/ca.key" 4096 2>&1 | tail -1; then
+    if ! openssl genrsa -out "$CERT_DIR/ca.key" 2048 2>&1 | tail -1; then
         fail "CA key generation failed"
     fi
     if ! openssl req -x509 -new -nodes -key "$CERT_DIR/ca.key" -sha256 -days 3650 \
@@ -595,14 +597,17 @@ if [ -f "$CERT_DIR/ca.crt" ]; then
         # Use a temporary Cortex container to extract default Java cacerts + import our CA.
         # This avoids needing keytool on the host — uses the container's own JDK tools.
         # --entrypoint sh: override Cortex's entrypoint so sh -c runs properly
+        # Convert PEM → DER first (Java 11 keytool can choke on PEM certs)
+        openssl x509 -in "$CERT_DIR/ca.crt" -outform DER -out "$CERT_DIR/ca.der"
         docker run --rm --entrypoint sh \
             -v "$(dirname "$CORTEX_CACERTS"):/out" \
-            -v "$CERT_DIR/ca.crt:/tmp/ca.crt:ro" \
+            -v "$CERT_DIR/ca.der:/tmp/ca.der:ro" \
             thehiveproject/cortex:3.1.8-1 \
             -c "cp /usr/lib/jvm/java-11-amazon-corretto/lib/security/cacerts /out/cortex-cacerts && \
                 keytool -importcert -trustcacerts -alias socstack-ca \
-                -file /tmp/ca.crt -keystore /out/cortex-cacerts \
+                -file /tmp/ca.der -keystore /out/cortex-cacerts \
                 -storepass changeit -noprompt" 2>&1 | tail -3
+        rm -f "$CERT_DIR/ca.der"
         if [ -f "$CORTEX_CACERTS" ]; then
             ok "Cortex truststore created with self-signed CA (from container keytool)"
         else

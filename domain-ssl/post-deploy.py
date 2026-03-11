@@ -50,26 +50,26 @@ if os.path.exists(ENV_FILE):
 
 # == Config ==================================================================
 NPM_PORT = 60081
-NPM_EMAIL = env.get("NPM_ADMIN_EMAIL", "admin@yourdomain.com")
+NPM_EMAIL = env.get("NPM_ADMIN_EMAIL", "admin@codesec.in")
 NPM_PASS = env.get("NPM_ADMIN_PASSWORD", "SocNpm@2025")
 
-N8N_EMAIL = env.get("N8N_ADMIN_EMAIL", "admin@yourdomain.com")
+N8N_EMAIL = env.get("N8N_ADMIN_EMAIL", "admin@codesec.in")
 N8N_PASS = env.get("N8N_ADMIN_PASSWORD", "SocN8n@2025")
 
-CORTEX_ADMIN = env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com")
+CORTEX_ADMIN = env.get("CORTEX_ADMIN_USER", "admin@codesec.in")
 CORTEX_PASS = env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
 CORTEX_ORG = env.get("CORTEX_ORG_NAME", "codesec")
-CORTEX_ORG_ADMIN = env.get("CORTEX_ORG_ADMIN", "orgadmin@yourdomain.com")
+CORTEX_ORG_ADMIN = env.get("CORTEX_ORG_ADMIN", "orgadmin@codesec.in")
 
 THEHIVE_USER = env.get("THEHIVE_ADMIN_USER", "admin@thehive.local")
 THEHIVE_PASS = env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025")
 THEHIVE_DEFAULT = env.get("THEHIVE_DEFAULT_PASSWORD", "secret")
 THEHIVE_ORG = env.get("THEHIVE_ORG_NAME", "CODESEC")
 THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "CodeSec SOC Organization")
-THEHIVE_ANALYST = env.get("THEHIVE_ANALYST_USER", "analyst@yourdomain.com")
+THEHIVE_ANALYST = env.get("THEHIVE_ANALYST_USER", "analyst@codesec.in")
 THEHIVE_ANALYST_PASS = env.get("THEHIVE_ANALYST_PASSWORD", "SocAnalyst@2025")
 
-MISP_ADMIN = env.get("MISP_ADMIN_EMAIL", "admin@yourdomain.com")
+MISP_ADMIN = env.get("MISP_ADMIN_EMAIL", "admin@codesec.in")
 MISP_PASS = env.get("MISP_ADMIN_PASSWORD", "SocMisp@2025")
 MISP_DB_USER = env.get("MISP_DB_USER", "misp")
 MISP_DB_PASS = env.get("MISP_DB_PASSWORD", "SocMispDb@2025")
@@ -85,17 +85,17 @@ SSO_GROUP_ADMIN = env.get("SSO_GROUP_ADMIN", "soc-admin")
 SSO_GROUP_ANALYST = env.get("SSO_GROUP_ANALYST", "soc-analyst")
 SSO_GROUP_READONLY = env.get("SSO_GROUP_READONLY", "soc-readonly")
 
-SSO_ADMIN_EMAIL = env.get("SSO_ADMIN_EMAIL", "admin@yourdomain.com")
+SSO_ADMIN_EMAIL = env.get("SSO_ADMIN_EMAIL", "admin@codesec.in")
 SSO_ADMIN_PASS = env.get("SSO_ADMIN_PASSWORD", "SocSsoAdmin@2025")
 SSO_ADMIN_FIRST = env.get("SSO_ADMIN_FIRST", "SOC")
 SSO_ADMIN_LAST = env.get("SSO_ADMIN_LAST", "Admin")
 
-SSO_ANALYST_EMAIL = env.get("SSO_ANALYST_EMAIL", "analyst@yourdomain.com")
+SSO_ANALYST_EMAIL = env.get("SSO_ANALYST_EMAIL", "analyst@codesec.in")
 SSO_ANALYST_PASS = env.get("SSO_ANALYST_PASSWORD", "SocSsoAnalyst@2025")
 SSO_ANALYST_FIRST = env.get("SSO_ANALYST_FIRST", "SOC")
 SSO_ANALYST_LAST = env.get("SSO_ANALYST_LAST", "Analyst")
 
-SSO_READONLY_EMAIL = env.get("SSO_READONLY_EMAIL", "readonly@yourdomain.com")
+SSO_READONLY_EMAIL = env.get("SSO_READONLY_EMAIL", "readonly@codesec.in")
 SSO_READONLY_PASS = env.get("SSO_READONLY_PASSWORD", "SocSsoReadonly@2025")
 SSO_READONLY_FIRST = env.get("SSO_READONLY_FIRST", "SOC")
 SSO_READONLY_LAST = env.get("SSO_READONLY_LAST", "Readonly")
@@ -1595,7 +1595,7 @@ def save_deployed():
     deployed["WAZUH_API_PASSWORD"] = env.get("WAZUH_API_PASSWORD", "MyS3cr37P450r.*-")
     deployed["KC_ADMIN_USER"] = env.get("KC_ADMIN_USER", "admin")
     deployed["KC_ADMIN_PASSWORD"] = env.get("KC_ADMIN_PASSWORD", "SocKeycloak@2025")
-    deployed["MISP_ADMIN_EMAIL"] = env.get("MISP_ADMIN_EMAIL", "admin@yourdomain.com")
+    deployed["MISP_ADMIN_EMAIL"] = env.get("MISP_ADMIN_EMAIL", "admin@codesec.in")
     deployed["MISP_ADMIN_PASSWORD"] = env.get("MISP_ADMIN_PASSWORD", "SocMisp@2025")
     deployed["MINIO_ROOT_USER"] = env.get("MINIO_ROOT_USER", "socminioadmin")
     deployed["MINIO_ROOT_PASSWORD"] = env.get("MINIO_ROOT_PASSWORD", "SocMinio@2025")

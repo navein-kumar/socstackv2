@@ -163,7 +163,7 @@ def test_auth():
     # NPM
     def check_npm():
         r = requests.post("http://localhost:60081/api/tokens", json={
-            "identity": env.get("NPM_ADMIN_EMAIL", "admin@yourdomain.com"),
+            "identity": env.get("NPM_ADMIN_EMAIL", "admin@codesec.in"),
             "secret": env.get("NPM_ADMIN_PASSWORD", "ChangeMe_Npm@2025")
         })
         if r.status_code == 200 and "token" in r.json():
@@ -226,7 +226,7 @@ def test_auth():
                 ["docker", "exec", "socstack-misp-db", "mysql", "-u",
                  env.get("MISP_DB_USER", "misp"), f"-p{env.get('MISP_DB_PASSWORD', 'ChangeMe_MispDb@2025')}",
                  "misp", "-N", "-e",
-                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@yourdomain.com')}' LIMIT 1;"],
+                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@codesec.in')}' LIMIT 1;"],
                 capture_output=True, text=True, timeout=10
             )
             misp_key = result.stdout.strip()
@@ -253,7 +253,7 @@ def test_auth():
     # TheHive analyst
     def check_thehive_analyst():
         r = requests.get("http://localhost:9000/api/v1/user/current",
-                         auth=(env.get("THEHIVE_ANALYST_USER", "analyst@yourdomain.com"),
+                         auth=(env.get("THEHIVE_ANALYST_USER", "analyst@codesec.in"),
                                env.get("THEHIVE_ANALYST_PASSWORD", "ChangeMe_Analyst@2025")))
         if r.status_code == 200:
             return True, f"profile={r.json().get('profile','?')} org={r.json().get('organisation','?')}"
@@ -263,7 +263,7 @@ def test_auth():
     # Cortex admin
     def check_cortex():
         r = requests.post("http://localhost:9001/api/login", json={
-            "user": env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com"),
+            "user": env.get("CORTEX_ADMIN_USER", "admin@codesec.in"),
             "password": env.get("CORTEX_ADMIN_PASSWORD", "ChangeMe_Cortex@2025")
         })
         if r.status_code == 200:
@@ -274,7 +274,7 @@ def test_auth():
     # Cortex org admin
     def check_cortex_org():
         r = requests.post("http://localhost:9001/api/login", json={
-            "user": env.get("CORTEX_ORG_ADMIN", "orgadmin@yourdomain.com"),
+            "user": env.get("CORTEX_ORG_ADMIN", "orgadmin@codesec.in"),
             "password": env.get("CORTEX_ADMIN_PASSWORD", "ChangeMe_Cortex@2025")
         })
         if r.status_code == 200:
@@ -338,7 +338,7 @@ def test_integrations():
                 ["docker", "exec", "socstack-misp-db", "mysql", "-u",
                  env.get("MISP_DB_USER", "misp"), f"-p{env.get('MISP_DB_PASSWORD', 'ChangeMe_MispDb@2025')}",
                  "misp", "-N", "-e",
-                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@yourdomain.com')}' LIMIT 1;"],
+                 f"SELECT authkey FROM users WHERE email='{env.get('MISP_ADMIN_EMAIL', 'admin@codesec.in')}' LIMIT 1;"],
                 capture_output=True, text=True, timeout=10
             )
             key = result.stdout.strip()
@@ -373,7 +373,7 @@ def test_integrations():
     def check_cortex_org():
         session = requests.Session()
         r = session.post("http://localhost:9001/api/login", json={
-            "user": env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com"),
+            "user": env.get("CORTEX_ADMIN_USER", "admin@codesec.in"),
             "password": env.get("CORTEX_ADMIN_PASSWORD", "ChangeMe_Cortex@2025")
         })
         if r.status_code != 200:
@@ -437,7 +437,7 @@ def test_integrations():
         realm = env.get("KC_WAZUH_REALM", "SOC")
         client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
         secret = env.get("SSO_CLIENT_SECRET", "")
-        user = env.get("SSO_ADMIN_EMAIL", "admin@yourdomain.com")
+        user = env.get("SSO_ADMIN_EMAIL", "admin@codesec.in")
         pwd = env.get("SSO_ADMIN_PASSWORD", "ChangeMe_SsoAdmin@2025")
         if not secret:
             return False, "No SSO_CLIENT_SECRET in .env/.env.deployed"
@@ -463,7 +463,7 @@ def test_integrations():
         realm = env.get("KC_WAZUH_REALM", "SOC")
         client_id = env.get("KC_WAZUH_CLIENT_ID", "soc-sso")
         secret = env.get("SSO_CLIENT_SECRET", "")
-        user = env.get("SSO_ANALYST_EMAIL", "analyst@yourdomain.com")
+        user = env.get("SSO_ANALYST_EMAIL", "analyst@codesec.in")
         pwd = env.get("SSO_ANALYST_PASSWORD", "ChangeMe_SsoAnalyst@2025")
         if not secret:
             return False, "No SSO_CLIENT_SECRET in .env/.env.deployed"
@@ -515,7 +515,7 @@ def test_proxy_ssl():
     # Get NPM token
     try:
         r = requests.post("http://localhost:60081/api/tokens", json={
-            "identity": env.get("NPM_ADMIN_EMAIL", "admin@yourdomain.com"),
+            "identity": env.get("NPM_ADMIN_EMAIL", "admin@codesec.in"),
             "secret": env.get("NPM_ADMIN_PASSWORD", "ChangeMe_Npm@2025")
         })
         if r.status_code != 200:

@@ -53,7 +53,7 @@ if os.path.exists(ENV_FILE):
 
 # == Config ==================================================================
 NPM_PORT  = 60081
-NPM_EMAIL = env.get("NPM_ADMIN_EMAIL", "admin@local.lab")
+NPM_EMAIL = env.get("NPM_ADMIN_EMAIL", "admin@yourdomain.com")
 NPM_PASS  = env.get("NPM_ADMIN_PASSWORD", "SocNpm@2025")
 
 SERVER_IP    = env.get("SERVER_IP", "127.0.0.1")
@@ -64,23 +64,23 @@ MISP_PORT    = env.get("MISP_PORT",    "8446")
 THEHIVE_PORT = env.get("THEHIVE_PORT", "8447")
 CORTEX_PORT  = env.get("CORTEX_PORT",  "8448")
 
-N8N_EMAIL = env.get("N8N_ADMIN_EMAIL", "admin@local.lab")
+N8N_EMAIL = env.get("N8N_ADMIN_EMAIL", "admin@yourdomain.com")
 N8N_PASS  = env.get("N8N_ADMIN_PASSWORD", "SocN8n@2025")
 
-CORTEX_ADMIN    = env.get("CORTEX_ADMIN_USER", "admin@local.lab")
+CORTEX_ADMIN    = env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com")
 CORTEX_PASS     = env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
-CORTEX_ORG      = env.get("CORTEX_ORG_NAME", "yourorg")
-CORTEX_ORG_ADMIN = env.get("CORTEX_ORG_ADMIN", "orgadmin@local.lab")
+CORTEX_ORG      = env.get("CORTEX_ORG_NAME", "codesec")
+CORTEX_ORG_ADMIN = env.get("CORTEX_ORG_ADMIN", "orgadmin@yourdomain.com")
 
 THEHIVE_USER     = env.get("THEHIVE_ADMIN_USER", "admin@thehive.local")
 THEHIVE_PASS     = env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025")
 THEHIVE_DEFAULT  = env.get("THEHIVE_DEFAULT_PASSWORD", "secret")
-THEHIVE_ORG      = env.get("THEHIVE_ORG_NAME", "YOURORG")
-THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "SOC Organization")
-THEHIVE_ANALYST  = env.get("THEHIVE_ANALYST_USER", "analyst@local.lab")
+THEHIVE_ORG      = env.get("THEHIVE_ORG_NAME", "CODESEC")
+THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "CodeSec SOC Organization")
+THEHIVE_ANALYST  = env.get("THEHIVE_ANALYST_USER", "analyst@yourdomain.com")
 THEHIVE_ANALYST_PASS = env.get("THEHIVE_ANALYST_PASSWORD", "SocAnalyst@2025")
 
-MISP_ADMIN   = env.get("MISP_ADMIN_EMAIL", "admin@local.lab")
+MISP_ADMIN   = env.get("MISP_ADMIN_EMAIL", "admin@yourdomain.com")
 MISP_PASS    = env.get("MISP_ADMIN_PASSWORD", "SocMisp@2025")
 MISP_DB_USER = env.get("MISP_DB_USER", "misp")
 MISP_DB_PASS = env.get("MISP_DB_PASSWORD", "SocMispDb@2025")
@@ -96,17 +96,17 @@ SSO_GROUP_ADMIN    = env.get("SSO_GROUP_ADMIN", "soc-admin")
 SSO_GROUP_ANALYST  = env.get("SSO_GROUP_ANALYST", "soc-analyst")
 SSO_GROUP_READONLY = env.get("SSO_GROUP_READONLY", "soc-readonly")
 
-SSO_ADMIN_EMAIL = env.get("SSO_ADMIN_EMAIL", "admin@local.lab")
+SSO_ADMIN_EMAIL = env.get("SSO_ADMIN_EMAIL", "admin@yourdomain.com")
 SSO_ADMIN_PASS  = env.get("SSO_ADMIN_PASSWORD", "SocSsoAdmin@2025")
 SSO_ADMIN_FIRST = env.get("SSO_ADMIN_FIRST", "SOC")
 SSO_ADMIN_LAST  = env.get("SSO_ADMIN_LAST", "Admin")
 
-SSO_ANALYST_EMAIL = env.get("SSO_ANALYST_EMAIL", "analyst@local.lab")
+SSO_ANALYST_EMAIL = env.get("SSO_ANALYST_EMAIL", "analyst@yourdomain.com")
 SSO_ANALYST_PASS  = env.get("SSO_ANALYST_PASSWORD", "SocSsoAnalyst@2025")
 SSO_ANALYST_FIRST = env.get("SSO_ANALYST_FIRST", "SOC")
 SSO_ANALYST_LAST  = env.get("SSO_ANALYST_LAST", "Analyst")
 
-SSO_READONLY_EMAIL = env.get("SSO_READONLY_EMAIL", "readonly@local.lab")
+SSO_READONLY_EMAIL = env.get("SSO_READONLY_EMAIL", "readonly@yourdomain.com")
 SSO_READONLY_PASS  = env.get("SSO_READONLY_PASSWORD", "SocSsoReadonly@2025")
 SSO_READONLY_FIRST = env.get("SSO_READONLY_FIRST", "SOC")
 SSO_READONLY_LAST  = env.get("SSO_READONLY_LAST", "Readonly")
@@ -733,7 +733,7 @@ def step_sso_config_files():
         content = content.replace("YOUR_SSO_REALM", SSO_REALM)
         content = content.replace("YOUR_SSO_CLIENT_ID", SSO_CLIENT_ID)
         content = content.replace("YOUR_CORTEX_ORG_NAME", CORTEX_ORG)
-        content = content.replace("YOUR_CORTEX_SECRET", env.get("CORTEX_SECRET", "CortexSecretKey"))
+        content = content.replace("YOUR_CORTEX_SECRET", env.get("CORTEX_SECRET", "ChangeMe_Cortex2025SecretKey"))
         with open(cortex_conf, "w") as f:
             f.write(content)
         log(f"  -> cortex-application.conf updated (SSO secret + IP:PORT + org)")
@@ -1326,7 +1326,7 @@ def save_deployed():
     deployed["WAZUH_API_PASSWORD"]     = env.get("WAZUH_API_PASSWORD", "MyS3cr37P450r.*-")
     deployed["KC_ADMIN_USER"]          = env.get("KC_ADMIN_USER", "admin")
     deployed["KC_ADMIN_PASSWORD"]      = env.get("KC_ADMIN_PASSWORD", "SocKeycloak@2025")
-    deployed["MISP_ADMIN_EMAIL"]       = env.get("MISP_ADMIN_EMAIL", "admin@local.lab")
+    deployed["MISP_ADMIN_EMAIL"]       = env.get("MISP_ADMIN_EMAIL", "admin@yourdomain.com")
     deployed["MISP_ADMIN_PASSWORD"]    = env.get("MISP_ADMIN_PASSWORD", "SocMisp@2025")
     deployed["MINIO_ROOT_USER"]        = "socminioadmin"
     deployed["MINIO_ROOT_PASSWORD"]    = "SocMinio@2025"
@@ -1501,13 +1501,18 @@ if __name__ == "__main__":
     step_sso_config_files()          # 5a: Replace SSO placeholders (no Keycloak needed)
     client_secret = step_keycloak_sso()  # 5b: Keycloak realm/client/users (needs Keycloak API)
 
-    # Restart Cortex + TheHive to reload updated SSO configs
+    # Restart Cortex + TheHive to reload updated SSO application.conf.
+    # IMPORTANT: Use "docker-compose restart" NOT "up -d --no-deps".
+    # "up -d" only recreates if compose-level config changes (image, env, etc).
+    # Bind-mounted file content changes (from Step 5a placeholder replacement)
+    # are NOT detected by "up -d", so the container stays running with the
+    # old placeholder config. "restart" forces the process to reload.
     log("\n  Restarting Cortex + TheHive to reload SSO application.conf...")
     for svc in ["socstack-cortex", "socstack-thehive"]:
         try:
             r = subprocess.run(
                 ["docker-compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
-                 "up", "-d", "--no-deps", svc],
+                 "restart", svc],
                 capture_output=True, text=True, timeout=120, cwd=BASE_DIR
             )
             if r.returncode == 0:
@@ -1533,6 +1538,23 @@ if __name__ == "__main__":
             log(f"  ! hive-bridge restart failed: {r.stderr[:200]}")
     except Exception as e:
         log(f"  X hive-bridge restart error: {e}")
+
+    # Restart n8n — hooks.js caches the owner at startup. Since n8n starts
+    # BEFORE post-deploy creates the owner (Step 1), the cache is empty.
+    # This restart lets hooks.js re-initialize and find the owner account.
+    log("\n  Restarting n8n (reload hooks.js with owner account)...")
+    try:
+        r = subprocess.run(
+            ["docker-compose", "-f", os.path.join(BASE_DIR, "docker-compose.yml"),
+             "restart", "socstack-n8n"],
+            capture_output=True, text=True, timeout=60, cwd=BASE_DIR
+        )
+        if r.returncode == 0:
+            log("  -> n8n restarted OK (hooks.js will re-cache owner)")
+        else:
+            log(f"  ! n8n restart failed: {r.stderr[:200]}")
+    except Exception as e:
+        log(f"  X n8n restart error: {e}")
 
     step_wazuh_security()
     step_wazuh_api_role_mapping()

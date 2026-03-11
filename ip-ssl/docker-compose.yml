@@ -3,7 +3,7 @@
 # IP-based deployment: self-signed SSL + per-service ports
 #
 # IMAGE PINNING: All images are pinned to exact versions tested
-# on 2026-03-09. Do NOT change to :latest — upstream updates
+# on 2026-03-10. Do NOT change to :latest — upstream updates
 # can break SSO hooks, config formats, and API compatibility.
 # To upgrade: test the new version locally first, then update
 # the tag here. See IMAGE-VERSIONS.md for the full version map.
@@ -545,7 +545,7 @@ services:
       - socstack_net
 
   socstack-n8n:
-    image: docker.n8n.io/n8nio/n8n:2.7.5
+    image: docker.n8n.io/n8nio/n8n:1.109.2
     container_name: socstack-n8n
     restart: unless-stopped
     dns:

@@ -15,7 +15,7 @@ All credentials are in `/opt/socstack/.env.deployed` on the server.
 
 | Field | Value |
 |-------|-------|
-| Server Name | `Cortex-YOURORG` |
+| Server Name | `Cortex-CODESEC` |
 | URL | `http://socstack-cortex:9001` |
 | API Key | *(see `.env.deployed` → `CORTEX_API_KEY`)* |
 | Check Certificate Authority | **DISABLE** (toggle OFF) |
@@ -162,7 +162,7 @@ SSO users are assigned permissions based on their Keycloak group membership, whi
 > **TheHive Analyst Account:**
 > - User: `analyst@yourdomain.com` / *(see `.env.deployed` → `THEHIVE_ANALYST_PASSWORD`)*
 > - Profile: `analyst` — can create/manage alerts & cases
-> - Organisation: `YOURORG`
+> - Organisation: `CODESEC`
 
 ### Enable Workflow & Connect Wazuh
 

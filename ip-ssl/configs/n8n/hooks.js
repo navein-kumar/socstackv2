@@ -1,12 +1,12 @@
 /**
- * n8n Community Edition SSO Hook (v3.2 - Shared Owner Session + Origin Fix)
+ * n8n Community Edition SSO Hook (v4.0 - Stable for n8n 1.109.x)
  *
  * Bypasses n8n CE's workflow sharing limitation by logging ALL SSO users
  * into the single owner account. This way everyone sees the same workflows,
  * credentials, and executions.
  *
  * Flow:
- *   Browser -> NPM -> oauth2-proxy (Keycloak auth) -> n8n
+ *   Browser -> Nginx -> oauth2-proxy (Keycloak auth) -> n8n
  *   oauth2-proxy verifies Keycloak token and group membership
  *   This hook reads the trusted header, then issues a session cookie
  *   for the n8n OWNER account (not the SSO user's email)
@@ -22,23 +22,23 @@
  *   - soc-readonly is blocked before reaching this hook
  *   - Both groups get the same owner session (full workflow access)
  *
- * Origin header fix (v3.1):
- *   n8n 2.7+ validates the Origin header on /rest/push (SSE/WebSocket).
+ * Origin header fix:
  *   oauth2-proxy strips the Origin header when proxying to the upstream.
- *   This hook reconstructs the Origin from X-Forwarded-Host + X-Forwarded-Proto
- *   headers that oauth2-proxy DOES set (with --reverse-proxy=true).
+ *   n8n's push endpoint (/rest/push) requires a valid Origin header for
+ *   SSE/WebSocket connections. This hook reconstructs it from
+ *   X-Forwarded-Host + X-Forwarded-Proto that oauth2-proxy sets.
  *
- * v3.2 fix:
- *   n8n 2.7+ changed the User entity — the `role` column became a ManyToOne
- *   relation to a separate Role table. Using `UserRepo.find({ relations: ["role"] })`
- *   causes TypeORM to not load all scalar columns (email, password, etc.).
- *   issueCookie() needs email+password to create a valid JWT hash.
- *   Fix: use createQueryBuilder to explicitly select all needed fields,
- *   then join the role relation separately.
+ * Version history:
+ *   v3.1 — Initial version with Origin fix
+ *   v3.2 — Attempted n8n 2.7+ role relation fix (createQueryBuilder)
+ *   v3.3 — Two-query merge for n8n 2.7.5 TypeORM bug
+ *   v4.0 — Downgraded to n8n 1.109.2 (role is string, no TypeORM bug)
+ *          + Defensive caching (don't cache owner if email is null)
+ *          + Lazy owner lookup (works even if n8n starts before post-deploy)
  *
  * Environment variables:
  *   N8N_FORWARD_AUTH_HEADER  - Header name from oauth2-proxy (default: X-Forwarded-Email)
- *   N8N_OWNER_EMAIL          - Owner account email (default: from DB, first global:owner)
+ *   N8N_OWNER_EMAIL          - Owner account email (default: from DB, first user)
  *   SSO_LOGOUT_URL           - Logout redirect (default: /oauth2/sign_out)
  */
 module.exports = {
@@ -68,78 +68,63 @@ module.exports = {
         const cookieName = "n8n-auth";
         const UserRepo = this.dbCollections.User;
 
-        // ── Find the n8n owner account (once at startup) ──
-        // The owner is the first user created by post-deploy.py with role global:owner
+        // ── Find the n8n owner account ──
+        // The owner is the first user created by post-deploy.py with role "global:owner".
+        // n8n 1.109.x stores role as a simple string column on the User entity.
         //
-        // IMPORTANT: n8n 2.7+ changed User.role from a string column to a ManyToOne
-        // relation (Role entity). Using UserRepo.find({ relations: ["role"] }) causes
-        // TypeORM to NOT load scalar columns like email/password. issueCookie() needs
-        // these fields to create a valid JWT. We use createQueryBuilder to explicitly
-        // select all user columns + join the role relation.
+        // DEFENSIVE CACHING: Only cache the owner if the user has a valid email.
+        // On fresh deploy, n8n may start BEFORE post-deploy creates the owner.
+        // Without this check, a null/broken owner gets cached permanently and
+        // SSO never works until n8n is manually restarted.
         let ownerUser = null;
         const ownerEmail = process.env.N8N_OWNER_EMAIL || "";
 
         async function findOwner() {
-          if (ownerUser) return ownerUser;
+          // Only return cached owner if it has a valid email
+          if (ownerUser?.email) return ownerUser;
+          ownerUser = null; // Clear any broken cached result
 
           try {
-            // Use queryBuilder to ensure ALL user columns are selected
-            // alongside the role relation (avoids the n8n 2.7+ TypeORM issue)
-            const qb = UserRepo.createQueryBuilder("user")
-              .leftJoinAndSelect("user.role", "role");
-
+            // Strategy 1: Find by configured email (most reliable)
             if (ownerEmail) {
-              // Strategy 1: Find by env var email
-              ownerUser = await qb
-                .where("user.email = :email", { email: ownerEmail.toLowerCase() })
-                .getOne();
-
-              if (ownerUser) {
-                log("info", `Owner found by email: ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
+              const user = await UserRepo.findOneBy({ email: ownerEmail.toLowerCase() });
+              if (user?.email) {
+                ownerUser = user;
+                log("info", `Owner found by email: ${user.email} (role: ${user.role}, id: ${user.id})`);
                 return ownerUser;
               }
             }
 
-            // Strategy 2: Find user with global:owner role
-            ownerUser = await UserRepo.createQueryBuilder("user")
-              .leftJoinAndSelect("user.role", "role")
-              .where("role.slug = :slug", { slug: "global:owner" })
-              .getOne();
+            // Strategy 2: Find by role (n8n 1.109.x — role is a string column)
+            try {
+              const byRole = await UserRepo.findOneBy({ role: "global:owner" });
+              if (byRole?.email) {
+                ownerUser = byRole;
+                log("info", `Owner found by role: ${byRole.email} (role: ${byRole.role}, id: ${byRole.id})`);
+                return ownerUser;
+              }
+            } catch {
+              // role query might fail on n8n 2.x where role is a relation — ignore
+            }
 
-            if (ownerUser) {
-              log("info", `Owner found by role: ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
+            // Strategy 3: First user in DB (always the owner in n8n CE)
+            const first = await UserRepo.findOne({ where: {}, order: { createdAt: "ASC" } });
+            if (first?.email) {
+              ownerUser = first;
+              log("info", `Owner fallback (first user): ${first.email} (role: ${first.role}, id: ${first.id})`);
               return ownerUser;
             }
 
-            // Strategy 3: Fallback to first user (always the owner in n8n CE)
-            ownerUser = await UserRepo.createQueryBuilder("user")
-              .leftJoinAndSelect("user.role", "role")
-              .orderBy("user.createdAt", "ASC")
-              .getOne();
-
-            if (ownerUser) {
-              log("info", `Owner fallback (first user): ${ownerUser.email} (role: ${ownerUser.role?.slug || "?"})`);
-            } else {
-              log("error", "No users found in database — owner lookup failed");
-            }
+            // No users yet (n8n started before post-deploy ran)
+            log("warn", "No users found in database — owner will be resolved on first request");
           } catch (err) {
             log("error", `Owner lookup error: ${err.message}`);
-            // Fallback: try the simple find without relations
-            try {
-              const users = await UserRepo.find();
-              if (users.length > 0) {
-                ownerUser = users[0];
-                log("info", `Owner fallback (simple find): id=${ownerUser.id}, email=${ownerUser.email}`);
-              }
-            } catch (e2) {
-              log("error", `Owner fallback also failed: ${e2.message}`);
-            }
           }
 
           return ownerUser;
         }
 
-        // Pre-warm the owner lookup
+        // Pre-warm the owner lookup (may be null if post-deploy hasn't run yet)
         await findOwner();
 
         // ── Middleware stack injection ──
@@ -150,20 +135,16 @@ module.exports = {
           log("error", "cookieParser not found in middleware stack, trying fallback position");
         }
 
-        // ── FIX: Reconstruct missing Origin header (n8n 2.7+ origin validation) ──
+        // ── FIX: Reconstruct missing Origin header ──
         // oauth2-proxy strips the Origin header when proxying to the upstream.
-        // n8n's push endpoint (/rest/push) requires a valid Origin header for
-        // SSE/WebSocket connections. Without this fix, push connections fail with
-        // "Invalid origin!" and the editor shows "connection lost".
-        //
-        // We reconstruct the Origin from X-Forwarded-Host + X-Forwarded-Proto
-        // that oauth2-proxy sets when --reverse-proxy=true is enabled.
+        // n8n's push endpoint (/rest/push) may require a valid Origin header for
+        // SSE/WebSocket connections. We reconstruct it from X-Forwarded-Host +
+        // X-Forwarded-Proto that oauth2-proxy sets (with --reverse-proxy=true).
         const originFixLayer = new Layer("/", { strict: false, end: false }, (req, res, next) => {
           if (!req.headers.origin) {
             const fwdHost = req.headers["x-forwarded-host"] || req.headers.host;
             const fwdProto = (req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
             if (fwdHost) {
-              // Strip port from host if it's the default for the protocol
               const host = fwdHost.split(",")[0].trim();
               req.headers.origin = `${fwdProto}://${host}`;
             }
@@ -187,9 +168,9 @@ module.exports = {
             const ssoEmail = String(emailHeader).trim().toLowerCase();
             if (!ssoEmail || !ssoEmail.includes("@")) return next();
 
-            // Find the owner account
+            // Find the owner account (re-tries DB if not yet cached)
             const owner = await findOwner();
-            if (!owner) {
+            if (!owner || !owner.email) {
               log("error", `Cannot issue session — owner account not found. SSO user: ${ssoEmail}`);
               return next();
             }

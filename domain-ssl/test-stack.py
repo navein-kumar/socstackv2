@@ -362,7 +362,7 @@ def test_integrations():
                           json={"query": [{"_name": "listOrganisation"}]})
         if r.status_code == 200:
             orgs = [o["name"] for o in r.json()]
-            target = env.get("THEHIVE_ORG_NAME", "YOURORG")
+            target = env.get("THEHIVE_ORG_NAME", "CODESEC")
             if target in orgs:
                 return True, f"Org '{target}' exists, total orgs: {len(orgs)}"
             return False, f"Org '{target}' not found. Existing: {orgs}"
@@ -385,7 +385,7 @@ def test_integrations():
         if r.status_code == 200:
             orgs = r.json()
             names = [o.get("name", "?") for o in orgs]
-            target = env.get("CORTEX_ORG_NAME", "yourorg")
+            target = env.get("CORTEX_ORG_NAME", "codesec")
             if target in names:
                 return True, f"Org '{target}' exists"
             return False, f"Org '{target}' not found. Existing: {names}"

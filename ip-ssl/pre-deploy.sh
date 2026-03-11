@@ -349,6 +349,20 @@ echo "── 7. Self-Signed SSL Certificates ───────────�
 CERT_DIR="$DEPLOY_DIR/certs"
 mkdir -p "$CERT_DIR"
 
+# ── Docker mount cleanup ──
+# If docker-compose was run before certs existed, Docker creates bind-mount
+# source paths as DIRECTORIES (not files). OpenSSL silently fails trying to
+# write a file where a directory exists. Detect and remove stale directories.
+CERT_FILES_EXPECTED="ca.key ca.crt server.key server.crt"
+for f in $CERT_FILES_EXPECTED; do
+    if [ -d "$CERT_DIR/$f" ]; then
+        warn "$CERT_DIR/$f is a stale Docker-created directory — removing"
+        rm -rf "$CERT_DIR/$f"
+    fi
+done
+# Also clean any leftover serial/csr files from partial runs
+rm -f "$CERT_DIR/ca.srl" "$CERT_DIR/server.csr"
+
 # Check if valid certs already exist for this IP
 CERTS_OK=true
 for f in ca.key ca.crt server.key server.crt; do
@@ -369,12 +383,24 @@ fi
 if [ "$CERTS_OK" = false ]; then
     info "Generating self-signed CA and server certificate for IP: ${SERVER_IP}"
 
+    # Clean any partial files from a previous failed run
+    rm -f "$CERT_DIR/ca.key" "$CERT_DIR/ca.crt" "$CERT_DIR/server.key" "$CERT_DIR/server.crt" "$CERT_DIR/server.csr" "$CERT_DIR/ca.srl"
+
     # Step 1: Generate CA private key + self-signed CA certificate (10 years)
-    openssl genrsa -out "$CERT_DIR/ca.key" 4096 2>/dev/null
-    openssl req -x509 -new -nodes -key "$CERT_DIR/ca.key" -sha256 -days 3650 \
+    if ! openssl genrsa -out "$CERT_DIR/ca.key" 4096 2>&1 | tail -1; then
+        fail "CA key generation failed"
+    fi
+    if ! openssl req -x509 -new -nodes -key "$CERT_DIR/ca.key" -sha256 -days 3650 \
         -out "$CERT_DIR/ca.crt" \
-        -subj "/C=US/ST=Lab/L=Lab/O=SOC-Stack/OU=Security/CN=SOC-Stack-CA" 2>/dev/null
-    ok "CA certificate generated (valid 10 years)"
+        -subj "/C=US/ST=Lab/L=Lab/O=SOC-Stack/OU=Security/CN=SOC-Stack-CA" 2>&1; then
+        fail "CA certificate generation failed"
+    fi
+
+    if [ -f "$CERT_DIR/ca.crt" ]; then
+        ok "CA certificate generated (valid 10 years)"
+    else
+        fail "CA certificate file not created — check OpenSSL output above"
+    fi
 
     # Step 2: Create OpenSSL extension config with IP SAN
     cat > "$CERT_DIR/server-ext.cnf" << EOF
@@ -404,32 +430,42 @@ IP.2 = 127.0.0.1
 EOF
 
     # Step 3: Generate server key + CSR
-    openssl genrsa -out "$CERT_DIR/server.key" 2048 2>/dev/null
-    openssl req -new -key "$CERT_DIR/server.key" \
+    if ! openssl genrsa -out "$CERT_DIR/server.key" 2048 2>&1 | tail -1; then
+        fail "Server key generation failed"
+    fi
+    if ! openssl req -new -key "$CERT_DIR/server.key" \
         -out "$CERT_DIR/server.csr" \
-        -config "$CERT_DIR/server-ext.cnf" 2>/dev/null
+        -config "$CERT_DIR/server-ext.cnf" 2>&1; then
+        fail "Server CSR generation failed"
+    fi
 
     # Step 4: Sign the CSR with the CA (valid 825 days — Apple device limit)
-    openssl x509 -req -in "$CERT_DIR/server.csr" \
+    if ! openssl x509 -req -in "$CERT_DIR/server.csr" \
         -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
         -out "$CERT_DIR/server.crt" -days 825 -sha256 \
-        -extfile "$CERT_DIR/server-ext.cnf" -extensions v3_req 2>/dev/null
+        -extfile "$CERT_DIR/server-ext.cnf" -extensions v3_req 2>&1; then
+        fail "Server certificate signing failed"
+    fi
 
     # Verify the SAN is embedded in the signed cert
-    CERT_SAN=$(openssl x509 -in "$CERT_DIR/server.crt" -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name")
-    if echo "$CERT_SAN" | grep -q "IP Address:${SERVER_IP}"; then
-        ok "Server certificate generated with IP SAN: ${SERVER_IP}"
+    if [ -f "$CERT_DIR/server.crt" ]; then
+        CERT_SAN=$(openssl x509 -in "$CERT_DIR/server.crt" -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name")
+        if echo "$CERT_SAN" | grep -q "IP Address:${SERVER_IP}"; then
+            ok "Server certificate generated with IP SAN: ${SERVER_IP}"
+        else
+            fail "Server certificate SAN verification failed"
+            info "Debug: $CERT_SAN"
+        fi
     else
-        fail "Server certificate SAN verification failed"
-        info "Debug: $CERT_SAN"
+        fail "Server certificate file not created — check OpenSSL errors above"
     fi
 
     # Cleanup CSR (not needed after signing)
     rm -f "$CERT_DIR/server.csr"
 
     # Set permissions
-    chmod 400 "$CERT_DIR/ca.key" "$CERT_DIR/server.key"
-    chmod 444 "$CERT_DIR/ca.crt" "$CERT_DIR/server.crt"
+    chmod 400 "$CERT_DIR/ca.key" "$CERT_DIR/server.key" 2>/dev/null
+    chmod 444 "$CERT_DIR/ca.crt" "$CERT_DIR/server.crt" 2>/dev/null
     chmod 755 "$CERT_DIR"
     ok "Certificate permissions set (keys: 400, certs: 444)"
 fi
@@ -443,6 +479,21 @@ CERTS_YML="$DEPLOY_DIR/configs/wazuh/certs.yml"
 REQUIRED_CERTS="root-ca.pem admin.pem admin-key.pem wazuh.indexer.pem wazuh.indexer-key.pem wazuh.manager.pem wazuh.manager-key.pem wazuh.dashboard.pem wazuh.dashboard-key.pem"
 
 mkdir -p "$WAZUH_CERT_DIR"
+
+# ── Docker mount cleanup ──
+# Same issue as self-signed certs: if docker-compose was run before Wazuh
+# certs existed, Docker creates bind-mount sources as DIRECTORIES.
+# The wazuh-certs-generator then fails with "cp: -r not specified; omitting
+# directory" when it tries to write cert files. Remove stale directories.
+WAZUH_STALE_CLEANED=0
+for cert in $REQUIRED_CERTS root-ca-manager.pem root-ca.key root-ca-manager.key; do
+    if [ -d "$WAZUH_CERT_DIR/$cert" ]; then
+        warn "$WAZUH_CERT_DIR/$cert is a stale Docker-created directory — removing"
+        rm -rf "$WAZUH_CERT_DIR/$cert"
+        ((WAZUH_STALE_CLEANED++))
+    fi
+done
+[ "$WAZUH_STALE_CLEANED" -gt 0 ] && info "Cleaned $WAZUH_STALE_CLEANED stale directory(ies) from Wazuh cert dir"
 
 CERTS_FOUND=0
 CERTS_MISSING=0
@@ -490,6 +541,7 @@ CERTYML
                 ((GEN_OK++))
             else
                 ((GEN_FAIL++))
+                info "Missing after generation: $cert"
             fi
         done
 
@@ -530,6 +582,11 @@ fi
 # MUST be created BEFORE docker-compose up — Cortex volume mount expects a FILE,
 # not a directory. Docker auto-creates missing mount sources as directories.
 CORTEX_CACERTS="$DEPLOY_DIR/configs/thehive/cortex-cacerts"
+# Docker mount cleanup: remove stale directory if Docker created it
+if [ -d "$CORTEX_CACERTS" ]; then
+    warn "cortex-cacerts is a stale Docker-created directory — removing"
+    rm -rf "$CORTEX_CACERTS"
+fi
 if [ -f "$CERT_DIR/ca.crt" ]; then
     if [ -f "$CORTEX_CACERTS" ]; then
         ok "Cortex truststore already exists"

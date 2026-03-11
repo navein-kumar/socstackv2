@@ -58,14 +58,14 @@ N8N_PASS = env.get("N8N_ADMIN_PASSWORD", "SocN8n@2025")
 
 CORTEX_ADMIN = env.get("CORTEX_ADMIN_USER", "admin@yourdomain.com")
 CORTEX_PASS = env.get("CORTEX_ADMIN_PASSWORD", "SocCortex@2025")
-CORTEX_ORG = env.get("CORTEX_ORG_NAME", "yourorg")
+CORTEX_ORG = env.get("CORTEX_ORG_NAME", "codesec")
 CORTEX_ORG_ADMIN = env.get("CORTEX_ORG_ADMIN", "orgadmin@yourdomain.com")
 
 THEHIVE_USER = env.get("THEHIVE_ADMIN_USER", "admin@thehive.local")
 THEHIVE_PASS = env.get("THEHIVE_ADMIN_PASSWORD", "SocTheHive@2025")
 THEHIVE_DEFAULT = env.get("THEHIVE_DEFAULT_PASSWORD", "secret")
-THEHIVE_ORG = env.get("THEHIVE_ORG_NAME", "YOURORG")
-THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "Your SOC Organization")
+THEHIVE_ORG = env.get("THEHIVE_ORG_NAME", "CODESEC")
+THEHIVE_ORG_DESC = env.get("THEHIVE_ORG_DESC", "CodeSec SOC Organization")
 THEHIVE_ANALYST = env.get("THEHIVE_ANALYST_USER", "analyst@yourdomain.com")
 THEHIVE_ANALYST_PASS = env.get("THEHIVE_ANALYST_PASSWORD", "SocAnalyst@2025")
 
@@ -390,7 +390,7 @@ def step_cortex():
 
     # Create org
     r = session.post(f"{CURL}/api/organization", json={
-        "name": CORTEX_ORG, "description": "Your SOC Organization", "status": "Active"
+        "name": CORTEX_ORG, "description": "CodeSec SOC Organization", "status": "Active"
     })
     if r.status_code == 201:
         log(f"  -> Organization '{CORTEX_ORG}' created")

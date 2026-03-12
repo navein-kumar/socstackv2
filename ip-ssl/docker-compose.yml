@@ -574,6 +574,7 @@ services:
       - NODE_OPTIONS=--max-http-header-size=65536
       - N8N_EDITOR_BASE_URL=https://${SERVER_IP}:${N8N_PORT:-8445}
       - N8N_PUSH_BACKEND=sse
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
     depends_on:
       - socstack-n8n-redis
     networks:
